@@ -1,0 +1,48 @@
+# TODO
+
+- [ ] 修复 Web 层运行中静默忽略新输入的问题
+  - 当前行为：`internal/remote/server.go` 的 `Server` 只维护一组当前会话状态（`ag`、`conv`、`sessionID`、`streaming`、`agentCh`），多个 WebSocket 客户端共享这组状态。
+  - 问题位置：`handleUserMessage()` 在 `s.streaming == true` 时直接 `return`，新输入既不排队，也不向客户端反馈，用户请求可能被静默丢弃。
+  - 相关并发问题：WebSocket 消息通过 `go s.handleUserMessage(...)` 处理，`streaming` 的检查与赋值没有同步保护，同时到达的请求可能启动多个 Run，共享并修改同一个 conversation。
+  - 预期方向：明确忙时输入策略；若采用 FIFO，同一会话的新请求应入队，等待当前 Run 确认退出后再执行，并向 UI 反馈排队状态。若扩展多会话，应按 sessionID 隔离运行状态，允许不同会话并发。
+  - 验收：运行中提交的输入不会静默丢失；同一会话不会同时执行多个 Run；并发客户端提交时行为一致，UI 能确认请求已排队或被明确拒绝。
+
+- [ ] 按“Agent Loop → Agent Run → Client.Stream”三层重构 ReAct 执行架构
+  - 目标：让用户会话调度、一次独立请求的 ReAct 循环、一次大模型 API 请求分别承担清晰且互不重叠的职责。
+  - `Agent Loop`（会话调度层）
+    - 负责 session 生命周期和 session 状态管理；不同 session 可以并行执行，同一 session 内的请求必须 FIFO。
+    - 为每个用户 session 维护待处理 prompt 队列。用户在当前独立请求尚未完成时提交的新 prompt 不得丢失，应进入队列并在前一个 run 完成后执行。
+    - 负责把队列中的 prompt 依次创建为独立的 `Agent Run`，并隔离不同 session 的 conversation、usage anchor、工具执行状态、恢复状态和取消信号。
+    - 负责调用上下文管理（Layer 1 工具结果预算、Layer 2 压缩），明确调用发生在 session/run 的哪个边界，以及压缩后如何重置或重建 usage anchor。
+    - 负责用户记忆写入、记忆冲突处理和记忆召回；记忆召回结果应注入正确的 session/run，不能污染其他并行 session。
+    - 负责 session 级别的持久化、恢复、排队状态通知、取消和错误传播。
+    - 验收：不同 session 可并发；同一 session 严格 FIFO；运行中的新 prompt 可观察地排队；session 恢复后队列和上下文状态一致。
+  - `Agent Run`（一次独立用户请求的执行层）
+    - 一个 run 从一个用户 prompt 开始，到模型产生不再包含 tool call 的最终 assistant 回复，或明确失败、取消、达到策略上限时结束。
+    - 将当前 `Agent.Run` 中 `for iteration := 1; ; iteration++ { ... }` 的 ReAct 循环迁移到这一层；循环中的每次 iteration 代表一次模型决策和可能的一批工具执行。
+    - 负责调用 `Client.Stream`，消费并解析 stream 事件，拼接文本、thinking 和 tool call 参数，构造工具调用，按并发安全策略执行工具，并把工具结果加入本次 run 的上下文。
+    - 负责记录本次 run 的执行轨迹：开始/结束、每次模型请求、流式文本、thinking、tool call、工具开始/结束、工具结果、重试、压缩、错误、取消和最终回复等事件。
+    - 负责维护 run 级别的迭代次数、输出 token 恢复、ContextTooLong 重试、工具调用顺序和 run 完成原因；不要把 session 队列调度逻辑混入 run。
+    - 明确 run 与 conversation 的关系：run 使用所属 session 的上下文快照并追加新消息，结束后把结果和轨迹提交回 session；不能把一次 run 的中间 iteration 误当成一次独立用户请求。
+    - 验收：一个包含多轮工具调用的用户请求只生成一个 run 轨迹；run 结束条件明确；工具链、重试和最终回复均可按 run 回放。
+  - `Client.Stream`（单次模型 API 请求层）
+    - 只负责把给定的 conversation 和 tool schemas 编码成 provider 请求，发送一次大模型 API 请求，并将 provider 流解析为统一的 `llm.StreamEvent`。
+    - 负责 provider 特有的消息格式、工具格式、缓存标记、thinking 映射、usage 提取、stop reason 和 provider 错误分类。
+    - 不负责 session 队列、上下文压缩、记忆、工具实际执行或跨请求的 ReAct 循环。
+    - 每次 `Client.Stream` 调用都应有明确的 request/run 关联标识，便于轨迹聚合和错误定位。
+  - Run 级执行轨迹与 AGUI 风格事件
+    - 定义与 AGUI 事件类型语义一致的内部枚举/事件类型，并统一事件载荷、时间戳、sessionID、runID、iteration、requestID、toolCallID 等关联字段。
+    - 按 `agent run` 聚合轨迹：一个 run 包含多个 `Client.Stream` 请求、多个 iteration 和多次工具调用；不能只按单次 API 请求记录，否则无法还原完整 ReAct 过程。
+    - 区分事件来源：session 调度事件、run 生命周期事件、model stream 事件、tool 执行事件、context management 事件、memory 事件和错误/重试事件。
+    - 设计事件的顺序保证：同一 run 内按序写入；不同 session 可并行；跨 goroutine 的工具事件需要安全收集，并在展示/持久化时按序号或时间重排。
+    - 轨迹应支持实时订阅和持久化回放；敏感工具参数、超大工具结果和记忆正文需要遵循现有脱敏、溢写和预算策略，只在事件中保留引用或摘要。
+    - 为轨迹定义明确的 run 结束事件和结束原因枚举，例如 completed、failed、cancelled、context_compacted、max_iterations、user_rejected。
+  - 上下文边界与独立 run 语义
+    - 重新设计 `computeKeepStartIndex` 及相关压缩分组逻辑，使 Layer 2 优先按完整用户 run 保留近期上下文，而不是只按模型消息或单个 tool_use/tool_result 配对切分。
+    - 为 conversation 消息增加可追踪的 run 边界或 runID；压缩边界只能落在完整 run 之间，避免保留一个 run 的后半段而将其用户请求和前置工具链压进摘要。
+    - 明确 Layer 1 仍在工具结果进入历史前执行；Layer 2 由 session loop 在发送下一次模型请求前协调，但摘要内容和保留尾部必须遵守 run 边界。
+  - 建议迁移顺序
+    - 先抽出统一的 `Client.Stream` 请求/响应适配接口和 request 级事件。
+    - 再将当前 `Agent.Run` 的 iteration 循环抽成独立 `Agent Run` 对象，保持现有工具执行和错误恢复行为。
+    - 再实现 session loop、每 session FIFO 队列和跨 session 并行调度。
+    - 最后接入 run 级轨迹聚合、持久化/回放，以及按 run 边界的上下文压缩。
