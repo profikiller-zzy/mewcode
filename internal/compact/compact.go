@@ -286,70 +286,55 @@ func hasToolResults(m conversation.Message) bool {
 	return len(m.ToolResults) > 0
 }
 
-// hasToolUses 判断消息是否包含 tool_use 块（调用工具的 assistant 消息）。
-func hasToolUses(m conversation.Message) bool {
-	return len(m.ToolUses) > 0
-}
-
 // computeKeepStartIndex 选择摘要前缀（messages[:keepStart]）与原样保留尾部
-// （messages[keepStart:]）之间的边界。
-// 从尾部向前累加每条消息的 token；达到 keepRecentTokens 或 minKeepMessages 任一条件即停止。
-// 但保留尾部不能超过 keepMaxTokens；加入下一条会超限时就在此停止。
-// 遍历后向前调整边界，避免拆开 tool_use ↔ tool_result 配对。
+// （messages[keepStart:]）之间的边界。预算以完整的用户 run 为单位从尾部向前
+// 累加，所以边界不会落在一个多 iteration 工具链中间。旧会话没有
+// RunID 时，以普通 user prompt 作为 run 起点兼容分组。
 // 返回边界索引；keepStart <= 0 表示可摘要内容太少，调用方不执行压缩。
 func computeKeepStartIndex(messages []conversation.Message) int {
-	n := len(messages)
-	if n == 0 {
+	groups := groupMessagesByRun(messages)
+	if len(groups) == 0 {
 		return 0
 	}
 
 	keptTokens := 0
 	keptCount := 0
-	keepStart := n
-	for i := n - 1; i >= 0; i-- {
-		msgTokens := EstimateTokens(messages[i : i+1])
-		// 上限：加入这条消息会超过上限时停止，并将其留在待摘要前缀中。
-		if keptCount > 0 && keptTokens+msgTokens > keepMaxTokens {
+	keepStart := len(messages)
+	for i := len(groups) - 1; i >= 0; i-- {
+		groupTokens := EstimateTokens(groups[i])
+		// 最近的一个 run 即使自身超预算也必须整个保留。
+		if keptCount > 0 && keptTokens+groupTokens > keepMaxTokens {
 			break
 		}
-		keptTokens += msgTokens
-		keptCount++
-		keepStart = i
-		// 下限：任一条件满足即可结束。
+		keptTokens += groupTokens
+		keptCount += len(groups[i])
+		keepStart -= len(groups[i])
 		if keptTokens >= keepRecentTokens || keptCount >= minKeepMessages {
 			break
 		}
 	}
-
-	// 不拆分 tool_use ↔ tool_result 配对：若边界消息含 tool_results，
-	// 就跨过对应的 assistant tool_use 消息向前移动边界。
-	for keepStart > 0 && hasToolResults(messages[keepStart]) {
-		prev := keepStart - 1
-		if hasToolUses(messages[prev]) {
-			keepStart = prev
-			continue
-		}
-		break
-	}
-
 	return keepStart
 }
 
-// groupMessagesByAPIRound 按 API 往返边界将消息分组。
-// 每个紧跟 tool_result 的 assistant 消息开始新分组（即新一轮 LLM 调用），
-// 从而保持 tool_use/tool_result 配对，删除分组时不会留下孤儿结果。
-func groupMessagesByAPIRound(messages []conversation.Message) [][]conversation.Message {
+// groupMessagesByRun 优先使用显式 RunID；对历史记录则把每条普通
+// user prompt 到下一条 prompt 之前的整条工具链视为一个 run。
+func groupMessagesByRun(messages []conversation.Message) [][]conversation.Message {
 	var groups [][]conversation.Message
 	var current []conversation.Message
-	prevHadToolResult := false
+	currentRunID := ""
 
 	for _, m := range messages {
-		if m.Role == "assistant" && prevHadToolResult && len(current) > 0 {
+		startsExplicitRun := m.RunID != "" && m.RunID != currentRunID
+		startsLegacyRun := m.RunID == "" && m.Role == "user" && len(m.ToolResults) == 0 &&
+			!strings.HasPrefix(m.Content, "<system-reminder>") && len(current) > 0
+		if (startsExplicitRun || startsLegacyRun) && len(current) > 0 {
 			groups = append(groups, current)
 			current = nil
 		}
 		current = append(current, m)
-		prevHadToolResult = len(m.ToolResults) > 0
+		if m.RunID != "" {
+			currentRunID = m.RunID
+		}
 	}
 	if len(current) > 0 {
 		groups = append(groups, current)
@@ -357,10 +342,10 @@ func groupMessagesByAPIRound(messages []conversation.Message) [][]conversation.M
 	return groups
 }
 
-// truncateHeadForPTL 从前缀删除最早的 API 轮次分组，直到估算 token 至少减少 tokenGap。
+// truncateHeadForPTL 从前缀删除最早的完整 agent run，直到估算 token 至少减少 tokenGap。
 // 没有可供摘要的有效内容时返回 nil。
 func truncateHeadForPTL(prefix []conversation.Message, tokenGap int) []conversation.Message {
-	groups := groupMessagesByAPIRound(prefix)
+	groups := groupMessagesByRun(prefix)
 	if len(groups) < 2 {
 		return nil
 	}
@@ -514,7 +499,7 @@ func callSummaryWithCacheSharing(
 	summaryConv.AppendMessages(messages[:lastAssistant+1])
 	summaryConv.AddUserMessage(summarySystemPrompt)
 
-	events, errs := client.Stream(ctx, summaryConv, toolSchemas)
+	events, errs := llm.StreamOnce(ctx, client, llm.StreamRequest{Conversation: summaryConv, Tools: toolSchemas})
 	var summary strings.Builder
 	for ev := range events {
 		if td, ok := ev.(llm.TextDelta); ok {
@@ -546,7 +531,7 @@ func callSummaryWithPTLRetry(
 		summaryConv := conversation.NewManager()
 		summaryConv.AddUserMessage(summarySystemPrompt + "\n\n" + text)
 
-		events, errs := client.Stream(ctx, summaryConv, toolSchemas)
+		events, errs := llm.StreamOnce(ctx, client, llm.StreamRequest{Conversation: summaryConv, Tools: toolSchemas})
 		var summary strings.Builder
 		for ev := range events {
 			if td, ok := ev.(llm.TextDelta); ok {

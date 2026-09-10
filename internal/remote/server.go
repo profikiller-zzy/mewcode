@@ -76,18 +76,19 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns map[*websocket.Conn]struct{}
+	// stateMu serializes session replacement/control commands with prompt
+	// submission. It is never held while consuming a run's event stream.
+	stateMu sync.Mutex
 
 	ag           *agent.Agent
+	agentLoop    *agent.AgentLoop
+	trace        *agent.TraceRecorder
 	conv         *conversation.Manager
 	registry     *tools.Registry
 	defaultTools tools.DefaultTools
 	client       llm.Client
 	sessionID    string
 	fileHistory  *filehistory.History
-
-	streaming    bool
-	cancelStream context.CancelFunc
-	agentCh      <-chan agent.AgentEvent
 
 	askUserCh chan tools.AskUserRequest
 
@@ -134,6 +135,9 @@ func (s *Server) Run() error {
 	}
 
 	s.initMCPServers()
+	if err := s.registerLoopSession(s.sessionID); err != nil {
+		return fmt.Errorf("初始化 Agent Loop 失败: %w", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -168,8 +172,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	conn.SetReadLimit(4 << 20) // 4MB
 
+	s.stateMu.Lock()
+	connectedSessionID := s.sessionID
+	s.stateMu.Unlock()
 	s.send(wsMessage{Type: "connected", Data: map[string]string{
-		"session": s.sessionID,
+		"session": connectedSessionID,
 		"cwd":     mustGetwd(),
 	}})
 
@@ -207,8 +214,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleAskUserResponse(data)
 
 		case "cancel":
-			if s.cancelStream != nil {
-				s.cancelStream()
+			s.stateMu.Lock()
+			sessionID := s.sessionID
+			s.stateMu.Unlock()
+			if s.agentLoop != nil {
+				_ = s.agentLoop.Cancel(sessionID)
 			}
 
 		case "ping":
@@ -299,6 +309,9 @@ func (s *Server) initAgent() error {
 	ag.CoordinatorActiveFn = teams.CoordinatorActiveFn(s.enableCoordinatorMode)
 
 	s.ag = ag
+	s.trace = agent.NewTraceRecorder(agent.NewJSONLTraceStore(wd))
+	ag.Trace = s.trace
+	s.agentLoop = agent.NewAgentLoop(s.trace)
 
 	if at, ok := s.registry.Get("Agent").(*agents.AgentTool); ok {
 		at.ParentChecker = ag.Checker
@@ -415,10 +428,6 @@ func (s *Server) initMCPServers() {
 }
 
 func (s *Server) handleUserMessage(content string) {
-	if s.streaming {
-		return
-	}
-
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return
@@ -430,28 +439,43 @@ func (s *Server) handleUserMessage(content string) {
 		return
 	}
 
-	s.streaming = true
-	wd, _ := os.Getwd()
-	session.SaveMessage(wd, s.sessionID, session.Message{Role: "user", Content: content, Ts: time.Now().Unix()})
-	s.conv.AddUserMessage(content)
-
-	if s.mcpInstructions != "" {
-		s.conv.AddSystemReminder(s.mcpInstructions)
-		s.mcpInstructions = ""
+	s.stateMu.Lock()
+	if s.agentLoop == nil {
+		s.stateMu.Unlock()
+		s.send(wsMessage{Type: "error", Data: map[string]string{"message": "Agent loop is not initialized."}})
+		return
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancelStream = cancel
-	s.agentCh = s.ag.Run(ctx, s.conv)
-
+	submission, err := s.agentLoop.Submit(context.Background(), s.sessionID, content)
+	s.stateMu.Unlock()
+	if err != nil {
+		s.send(wsMessage{Type: "error", Data: map[string]string{"message": err.Error()}})
+		return
+	}
 	askDone := make(chan struct{})
 	go s.listenForAskUser(askDone)
-	s.consumeAgentEvents()
+	s.consumeAgentEvents(submission.Events)
 	close(askDone)
+}
 
-	s.streaming = false
-	s.cancelStream = nil
-	s.agentCh = nil
+func (s *Server) registerLoopSession(sessionID string) error {
+	if s.agentLoop == nil || s.ag == nil || s.conv == nil {
+		return fmt.Errorf("agent loop dependencies are not initialized")
+	}
+	wd, _ := os.Getwd()
+	return s.agentLoop.RegisterSession(sessionID, agent.SessionOptions{
+		Agent:        s.ag,
+		Conversation: s.conv,
+		QueueStore:   agent.NewJSONQueueStore(wd),
+		BeforeRun: func(_ context.Context, _, _ string, _ *agent.Agent, conv *conversation.Manager) {
+			s.mu.Lock()
+			instructions := s.mcpInstructions
+			s.mcpInstructions = ""
+			s.mu.Unlock()
+			if instructions != "" {
+				conv.AddSystemReminder(instructions)
+			}
+		},
+	})
 }
 
 func (s *Server) buildCommandList() []map[string]string {
@@ -487,6 +511,26 @@ func (s *Server) handleSlashCommand(input string) {
 		s.send(wsMessage{Type: "command_done", Data: nil})
 		return
 	}
+	promptStateLocked := false
+	if cmd.Type != commands.TypePrompt {
+		s.stateMu.Lock()
+		defer s.stateMu.Unlock()
+	} else {
+		s.stateMu.Lock()
+		promptStateLocked = true
+		defer func() {
+			if promptStateLocked {
+				s.stateMu.Unlock()
+			}
+		}()
+	}
+	if cmd.Type != commands.TypePrompt && s.agentLoop != nil && s.agentLoop.IsBusy(s.sessionID) {
+		s.send(wsMessage{Type: "error", Data: map[string]string{
+			"message": fmt.Sprintf("/%s cannot run while this session is busy; wait for queued runs or cancel the active run first", name),
+		}})
+		s.send(wsMessage{Type: "command_done", Data: nil})
+		return
+	}
 
 	if args == "" && cmd.ArgPrompt != "" {
 		s.send(wsMessage{Type: "system", Data: map[string]string{"message": cmd.ArgPrompt}})
@@ -507,7 +551,7 @@ func (s *Server) handleSlashCommand(input string) {
 	case commands.TypeLocalUI:
 		switch name {
 		case "clear":
-			s.conv = conversation.NewManager()
+			s.conv.ReplaceWith(conversation.NewManager())
 			if s.ag != nil {
 				s.ag.ClearActiveSkills()
 				// Skill 的工具收窄随对话一起清掉，但 coordinator 的约束不清：
@@ -542,33 +586,19 @@ func (s *Server) handleSlashCommand(input string) {
 			return
 		}
 		prompt := cmd.Handler(ctx)
-		displayText := "/" + name
-		if args != "" {
-			displayText += " " + args
+		// Prompt 命令和普通输入共用 session FIFO，不绕过 AgentLoop
+		// 去并发修改 conversation。
+		submission, err := s.agentLoop.Submit(context.Background(), s.sessionID, prompt)
+		s.stateMu.Unlock()
+		promptStateLocked = false
+		if err != nil {
+			s.send(wsMessage{Type: "error", Data: map[string]string{"message": err.Error()}})
+			return
 		}
-		// TypePrompt 命令生成 prompt 注入给 agent
-		s.streaming = true
-		wd, _ := os.Getwd()
-		session.SaveMessage(wd, s.sessionID, session.Message{Role: "user", Content: displayText, Ts: time.Now().Unix()})
-		s.conv.AddUserMessage(prompt)
-
-		if s.mcpInstructions != "" {
-			s.conv.AddSystemReminder(s.mcpInstructions)
-			s.mcpInstructions = ""
-		}
-
-		c, cancel := context.WithCancel(context.Background())
-		s.cancelStream = cancel
-		s.agentCh = s.ag.Run(c, s.conv)
-
 		askDone := make(chan struct{})
 		go s.listenForAskUser(askDone)
-		s.consumeAgentEvents()
+		s.consumeAgentEvents(submission.Events)
 		close(askDone)
-
-		s.streaming = false
-		s.cancelStream = nil
-		s.agentCh = nil
 	}
 }
 
@@ -649,20 +679,16 @@ func (s *Server) handlePlan(args string) {
 	}})
 
 	if args != "" {
-		// 带参数直接发给 agent
-		s.streaming = true
-		session.SaveMessage(wd, s.sessionID, session.Message{Role: "user", Content: "/plan " + args, Ts: time.Now().Unix()})
-		s.conv.AddUserMessage(args)
-		ctx, cancel := context.WithCancel(context.Background())
-		s.cancelStream = cancel
-		s.agentCh = s.ag.Run(ctx, s.conv)
+		// 带参数的 plan 也是一个独立 run，与其他 prompt 严格 FIFO。
+		submission, err := s.agentLoop.Submit(context.Background(), s.sessionID, args)
+		if err != nil {
+			s.send(wsMessage{Type: "error", Data: map[string]string{"message": err.Error()}})
+			return
+		}
 		askDone := make(chan struct{})
 		go s.listenForAskUser(askDone)
-		s.consumeAgentEvents()
+		s.consumeAgentEvents(submission.Events)
 		close(askDone)
-		s.streaming = false
-		s.cancelStream = nil
-		s.agentCh = nil
 	}
 }
 
@@ -712,8 +738,13 @@ func (s *Server) handleResume(args string) {
 		return
 	}
 
-	// 重建会话
-	s.conv = conversation.NewManager()
+	// 重建会话；保留 Manager 指针，避免 session worker/记忆提取器
+	// 继续持有已经失效的 conversation。
+	oldSessionID := s.sessionID
+	if s.agentLoop != nil {
+		_ = s.agentLoop.UnregisterSession(oldSessionID)
+	}
+	s.conv.ReplaceWith(conversation.NewManager())
 	s.sessionID = targetID
 	if s.ag != nil {
 		s.ag.SetSessionID(s.sessionID)
@@ -730,6 +761,7 @@ func (s *Server) handleResume(args string) {
 		for _, k := range boundary.Keep {
 			replay = append(replay, session.Message{
 				Role:        k.Role,
+				RunID:       k.RunID,
 				Content:     k.Content,
 				ToolUses:    k.ToolUses,
 				ToolResults: k.ToolResults,
@@ -755,6 +787,14 @@ func (s *Server) handleResume(args string) {
 			s.send(wsMessage{Type: "replay_assistant", Data: map[string]string{"content": msg.Content}})
 		}
 	}
+	// 先完整重建上下文，再启动 worker；若有持久化的排队 prompt，
+	// 它们只会在恢复后的 conversation 上继续。
+	if s.agentLoop != nil {
+		if err := s.registerLoopSession(s.sessionID); err != nil {
+			s.send(wsMessage{Type: "error", Data: map[string]string{"message": err.Error()}})
+			return
+		}
+	}
 
 	restored := fmt.Sprintf("Session %s restored (%d messages).", targetID, len(replay))
 	if compacted {
@@ -765,11 +805,11 @@ func (s *Server) handleResume(args string) {
 	s.send(wsMessage{Type: "command_done", Data: nil})
 }
 
-func (s *Server) consumeAgentEvents() {
+func (s *Server) consumeAgentEvents(events <-chan agent.AgentEvent) {
 	streamBuf := ""
 	startTime := time.Now()
 
-	for ev := range s.agentCh {
+	for ev := range events {
 		switch e := ev.(type) {
 		case agent.StreamText:
 			streamBuf += e.Text
@@ -859,6 +899,14 @@ func (s *Server) consumeAgentEvents() {
 			s.send(wsMessage{Type: "retry", Data: map[string]any{
 				"reason": e.Reason,
 				"waitMs": e.Wait.Milliseconds(),
+			}})
+
+		case agent.QueueStatusEvent:
+			s.send(wsMessage{Type: "queue_status", Data: map[string]any{
+				"sessionId": e.SessionID,
+				"runId":     e.RunID,
+				"position":  e.Position,
+				"status":    e.Status,
 			}})
 		}
 	}

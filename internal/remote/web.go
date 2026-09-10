@@ -229,6 +229,7 @@ let currentThinkingText = '';
 let autoScroll = true;
 let pingTimer = null;
 let connectedOnce = false;
+const queuedRuns = new Map();
 
 // Markdown 渲染配置
 if (typeof marked !== 'undefined') {
@@ -401,6 +402,19 @@ function handleMessage(msg) {
 
     case 'retry':
       addSystem('↻ Retrying: ' + msg.data.reason);
+      break;
+
+    case 'queue_status':
+      queuedRuns.set(msg.data.runId, msg.data.status);
+      if (msg.data.status === 'queued' && msg.data.position > 1) {
+        addSystem('Queued request (position ' + msg.data.position + ').');
+      } else if (msg.data.status === 'running') {
+        streaming = true;
+      } else if (msg.data.status === 'done') {
+        queuedRuns.delete(msg.data.runId);
+        streaming = Array.from(queuedRuns.values()).includes('running');
+      }
+      updateUI();
       break;
   }
 }
@@ -683,7 +697,7 @@ function scrollToBottom() {
 function sendMessage() {
   if (slashMenu.classList.contains('show')) { hideSlashMenu(); }
   const text = inputEl.value.trim();
-  if (!text || streaming) return;
+  if (!text) return;
   addUser(text);
   ws.send(JSON.stringify({ type: 'user_message', data: { content: text } }));
   inputEl.value = '';
@@ -693,9 +707,10 @@ function sendMessage() {
 }
 
 function updateUI() {
-  sendBtn.disabled = streaming;
-  inputEl.disabled = streaming;
-  if (!streaming) inputEl.focus();
+  // AgentLoop accepts input while a run is active and executes it FIFO.
+  sendBtn.disabled = !ws || ws.readyState !== WebSocket.OPEN;
+  inputEl.disabled = false;
+  inputEl.focus();
 }
 
 // ── 斜杠命令菜单 ──

@@ -80,7 +80,10 @@ type Agent struct {
 	// file reads and skill invocations. The struct is concurrency-safe so
 	// the streaming executor can write to it from multiple goroutines.
 	RecoveryState *compact.RecoveryState
-	eventCh       chan AgentEvent
+	// Trace records complete run-level trajectories. It is optional; AgentLoop
+	// installs a durable recorder by default for interactive sessions.
+	Trace   *TraceRecorder
+	eventCh chan AgentEvent
 	// activeSkills tracks which Skill SOPs have been activated in this session (name → body).
 	// Used by /skills to show what's active and by RecoveryState to survive compaction.
 	// The body is injected once into the conversation as a message — NOT re-injected every turn.
@@ -231,14 +234,62 @@ func (a *Agent) currentToolSchemas() []map[string]any {
 	return filterSchemasByName(schemas, a.ToolNameFilter)
 }
 
+// Run is the compatibility entry point used by existing TUI and sub-agent
+// callers. The ReAct loop itself lives on AgentRun.
 func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan AgentEvent {
+	return a.NewRun(RunOptions{SessionID: a.SessionID, Conversation: conv, SessionHooks: true}).Start(ctx)
+}
+
+func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 	ch := make(chan AgentEvent, 32)
 
 	go func() {
 		defer close(ch)
-		defer a.emitHook(hooks.EventSessionEnd, "", nil)
-
-		a.emitHook(hooks.EventSessionStart, "", nil)
+		a := r.Agent
+		conv := r.Conversation
+		finishReason := RunFailed
+		finalReply := ""
+		defer func() {
+			conv.EndRun()
+			r.setFinishReason(finishReason)
+			finishEvent := TraceEvent{Type: TraceRunFinished, Source: TraceSourceRun, Reason: finishReason}
+			if finalReply != "" {
+				preview, truncated := tracePreview(finalReply)
+				finishEvent.Payload = map[string]any{"final_reply_preview": preview, "truncated": truncated}
+			}
+			r.record(ctx, finishEvent)
+		}()
+		conv.BeginRun(r.ID)
+		ctx = llm.WithStreamObserver(ctx, func(lifecycle llm.RequestLifecycle) {
+			event := TraceEvent{
+				Source:    TraceSourceModel,
+				Iteration: lifecycle.Metadata.Iteration,
+				RequestID: lifecycle.Metadata.RequestID,
+			}
+			if lifecycle.Phase == llm.RequestStarted {
+				event.Type = TraceModelRequestStarted
+			} else {
+				event.Type = TraceModelRequestFinished
+				event.Payload = map[string]any{
+					"stop_reason":   lifecycle.StopReason,
+					"input_tokens":  lifecycle.Usage.InputTokens,
+					"output_tokens": lifecycle.Usage.OutputTokens,
+				}
+				if lifecycle.Err != nil {
+					event.Payload["error"] = lifecycle.Err.Error()
+				}
+			}
+			r.record(ctx, event)
+		})
+		r.record(ctx, TraceEvent{Type: TraceRunStarted, Source: TraceSourceRun})
+		if r.Prompt != "" {
+			conv.AddUserMessage(r.Prompt)
+			a.persistLastMessage(conv, r.SessionID)
+		}
+		if r.sessionHooks {
+			defer a.emitHook(hooks.EventSessionEnd, "", nil)
+			a.emitHook(hooks.EventSessionStart, "", nil)
+		}
 
 		conv.InjectLongTermMemory(a.Instructions, a.MemoryContent, a.SkillSection)
 
@@ -249,10 +300,13 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 		for iteration := 1; ; iteration++ {
 			if a.MaxIterations > 0 && iteration > a.MaxIterations {
 				ch <- ErrorEvent{Message: fmt.Sprintf("Agent reached maximum iterations (%d)", a.MaxIterations)}
+				finishReason = RunMaxIterations
+				r.record(ctx, TraceEvent{Type: TraceError, Source: TraceSourceRun, Iteration: iteration, Payload: map[string]any{"message": "maximum iterations reached"}})
 				return
 			}
 
 			if ctx.Err() != nil {
+				finishReason = RunCancelled
 				return
 			}
 
@@ -261,6 +315,11 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 			// agree on what's wired up. Skill filters can only change between
 			// iterations, never within one.
 			toolSchemas := a.currentToolSchemas()
+			iterationCtx := llm.WithStreamMetadata(ctx, llm.StreamMetadata{
+				SessionID: r.SessionID,
+				RunID:     r.ID,
+				Iteration: iteration,
+			})
 
 			// Plan mode: inject structured workflow reminder.
 			if a.Checker != nil && a.Checker.Mode == permissions.ModePlan {
@@ -323,13 +382,21 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 
 			// Layer 2: auto-compact
 			// Layer 1（工具结果预算）在结果入历史时已处理完，历史里的内容就是最终大小，直接用其消息估算 token
-			if msg, err := compact.ManageContext(ctx, conv, a.Client, a.WorkDir, a.SessionID, a.ContextWindow, a.MaxOutputTokens, &a.compactTracking, a.RecoveryState, toolSchemas); err == nil && msg != "" {
+			if msg, err := r.Context.Prepare(iterationCtx, r, iteration, toolSchemas); err != nil {
+				r.record(ctx, TraceEvent{Type: TraceError, Source: TraceSourceContext, Iteration: iteration, Payload: map[string]any{"message": err.Error()}})
+			} else if msg != "" {
 				ch <- CompactEvent{Message: msg}
+				r.record(ctx, TraceEvent{Type: TraceContextCompacted, Source: TraceSourceContext, Iteration: iteration, Payload: map[string]any{"message": msg}})
 				conv.ClearUsageAnchor()
 				conv.InjectLongTermMemory(a.Instructions, a.MemoryContent, a.SkillSection)
 			}
 
-			events, errs := a.Client.Stream(ctx, conv, toolSchemas)
+			requestID := newRuntimeID("req")
+			events, errs := llm.StreamOnce(iterationCtx, a.Client, llm.StreamRequest{
+				Metadata:     llm.StreamMetadata{SessionID: r.SessionID, RunID: r.ID, RequestID: requestID, Iteration: iteration},
+				Conversation: conv,
+				Tools:        toolSchemas,
+			})
 
 			var text string
 			var toolCalls []llm.ToolCallComplete
@@ -338,11 +405,25 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 			var usage llm.UsageInfo
 
 			executor := NewStreamingExecutor(a.Registry, ch)
+			executor.SetObserver(
+				func(tc toolCallInfo) {
+					r.record(ctx, TraceEvent{Type: TraceToolExecutionStarted, Source: TraceSourceTool, Iteration: iteration, RequestID: requestID, ToolCallID: tc.toolID, ToolName: tc.toolName})
+				},
+				func(result toolExecResult) {
+					r.record(ctx, TraceEvent{Type: TraceToolExecutionEnded, Source: TraceSourceTool, Iteration: iteration, RequestID: requestID, ToolCallID: result.toolID, ToolName: result.toolName, Payload: map[string]any{
+						"result_ref":   "session:" + r.SessionID + "#tool:" + result.toolID,
+						"output_chars": len(result.output),
+						"is_error":     result.isError,
+						"elapsed_ms":   result.elapsed.Milliseconds(),
+					}})
+				},
+			)
 
 			for ev := range events {
 				switch e := ev.(type) {
 				case llm.ThinkingDelta:
 					ch <- ThinkingText{Text: e.Text}
+					r.record(ctx, TraceEvent{Type: TraceThinkingContent, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"delta": e.Text}})
 				case llm.ThinkingComplete:
 					thinkingBlocks = append(thinkingBlocks, conversation.ThinkingBlock{
 						Thinking:  e.Thinking,
@@ -351,8 +432,10 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 				case llm.TextDelta:
 					text += e.Text
 					ch <- StreamText{Text: e.Text}
+					r.record(ctx, TraceEvent{Type: TraceTextMessageContent, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"delta": e.Text}})
 				case llm.ToolCallStart:
 					ch <- ToolUseEvent{ToolID: e.ToolID, ToolName: e.ToolName}
+					r.record(ctx, TraceEvent{Type: TraceToolCallStarted, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, ToolCallID: e.ToolID, ToolName: e.ToolName})
 				case llm.ToolCallDelta:
 					// ignore
 				case llm.ToolCallComplete:
@@ -362,6 +445,8 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 						ToolName: e.ToolName,
 						Args:     e.Arguments,
 					}
+					r.record(ctx, TraceEvent{Type: TraceToolCallArguments, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, ToolCallID: e.ToolID, ToolName: e.ToolName, Payload: traceToolArguments(e.Arguments)})
+					r.record(ctx, TraceEvent{Type: TraceToolCallFinished, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, ToolCallID: e.ToolID, ToolName: e.ToolName})
 					// 收集工具调用，等流式结束后按安全性分批执行
 					executor.Submit(toolCallInfo{
 						toolID:    e.ToolID,
@@ -373,20 +458,29 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 					usage = e.Usage
 				}
 			}
+			if ctx.Err() != nil {
+				finishReason = RunCancelled
+				return
+			}
 			a.emitHook(hooks.EventPostReceive, text, nil)
 
 			// Handle stream errors.
 			select {
 			case err := <-errs:
 				if err != nil {
-					if retry, compacted := a.handleStreamError(ctx, ch, conv, err); retry {
+					if retry, compacted := a.handleStreamError(iterationCtx, ch, conv, err); retry {
+						r.record(ctx, TraceEvent{Type: TraceRetry, Source: TraceSourceRun, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"error": err.Error(), "compacted": compacted}})
 						if compacted {
 							conv.ClearUsageAnchor()
 							conv.InjectLongTermMemory(a.Instructions, a.MemoryContent, a.SkillSection)
 						}
 						continue // retry the turn
 					}
+					if ctx.Err() != nil {
+						finishReason = RunCancelled
+					}
 					ch <- ErrorEvent{Message: err.Error()}
+					r.record(ctx, TraceEvent{Type: TraceError, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"message": err.Error()}})
 					return
 				}
 			default:
@@ -415,20 +509,22 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 					}
 					if text != "" {
 						conv.AddAssistantFull(text, thinkingBlocks, nil)
-						a.persistLastMessage(conv)
+						a.persistLastMessage(conv, r.SessionID)
 						anchorAfterAssistant()
 						conv.AddUserMessage("Output token limit hit. Resume directly from where you stopped. Do not apologize or repeat previous content. Pick up mid-thought if needed.")
 					}
 					ch <- RetryEvent{Reason: "max_tokens escalation", Wait: 0}
+					r.record(ctx, TraceEvent{Type: TraceRetry, Source: TraceSourceRun, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"reason": "max_tokens escalation"}})
 					continue
 				} else if outputRecoveries < maxOutputTokensRecoveries {
 					// Multi-turn recovery.
 					outputRecoveries++
 					conv.AddAssistantFull(text, thinkingBlocks, nil)
-					a.persistLastMessage(conv)
+					a.persistLastMessage(conv, r.SessionID)
 					anchorAfterAssistant()
 					conv.AddUserMessage("Output token limit hit. Resume directly from where you stopped. Break remaining work into smaller pieces.")
 					ch <- RetryEvent{Reason: fmt.Sprintf("max_tokens recovery %d/%d", outputRecoveries, maxOutputTokensRecoveries), Wait: 0}
+					r.record(ctx, TraceEvent{Type: TraceRetry, Source: TraceSourceRun, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"reason": "max_tokens recovery", "attempt": outputRecoveries}})
 					continue
 				}
 				// Exhausted: fall through to normal completion.
@@ -438,8 +534,9 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 			}
 
 			if len(toolCalls) == 0 {
+				finalReply = text
 				conv.AddAssistantFull(text, thinkingBlocks, nil)
-				a.persistLastMessage(conv)
+				a.persistLastMessage(conv, r.SessionID)
 				if a.FileHistory != nil {
 					summary := text
 					if len(summary) > 60 {
@@ -448,6 +545,7 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 					a.FileHistory.MakeSnapshot(conv.Len(), summary)
 				}
 				ch <- LoopComplete{TotalTurns: iteration}
+				finishReason = RunCompleted
 				if a.OnLoopComplete != nil {
 					go a.OnLoopComplete(conv)
 				}
@@ -463,7 +561,7 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 				})
 			}
 			conv.AddAssistantFull(text, thinkingBlocks, toolUses)
-			a.persistLastMessage(conv)
+			a.persistLastMessage(conv, r.SessionID)
 			// Anchor real usage to the conversation now that the assistant message
 			// is in place; subsequent tool results + next user message are
 			// estimated incrementally on top of this baseline.
@@ -476,39 +574,38 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 			// 预览，模型就永远看不到全文，还会在「读回、溢写」之间打转。
 			exempt := make(map[string]bool)
 			for _, tc := range toolCalls {
-				if toolresult.IsSpillReadback(tc.ToolName, tc.Arguments, a.WorkDir, a.SessionID) {
+				if toolresult.IsSpillReadback(tc.ToolName, tc.Arguments, a.WorkDir, r.SessionID) {
 					exempt[tc.ToolID] = true
 				}
 			}
 
 			var toolResults []conversation.ToolResultBlock
-			for _, r := range results {
+			for _, result := range results {
 				ch <- ToolResultEvent{
-					ToolID:   r.toolID,
-					ToolName: r.toolName,
-					Output:   r.output,
-					IsError:  r.isError,
-					Elapsed:  r.elapsed,
+					ToolID:   result.toolID,
+					ToolName: result.toolName,
+					Output:   result.output,
+					IsError:  result.isError,
+					Elapsed:  result.elapsed,
 				}
-
-				content := r.output
-				if len(content) > tools.MaxOutputChars && !exempt[r.toolID] {
+				content := result.output
+				if len(content) > tools.MaxOutputChars && !exempt[result.toolID] {
 					// 单条超限：写盘换预览。写盘失败会原样保留，同一块磁盘
 					// 聚合预算也不必再试，所以两种结果都标记豁免。
-					content = toolresult.PersistLargeResult(a.WorkDir, a.SessionID, r.toolID, r.output)
-					exempt[r.toolID] = true
+					content = toolresult.PersistLargeResult(a.WorkDir, r.SessionID, result.toolID, result.output)
+					exempt[result.toolID] = true
 				}
 				toolResults = append(toolResults, conversation.ToolResultBlock{
-					ToolUseID:     r.toolID,
+					ToolUseID:     result.toolID,
 					Content:       content,
-					IsError:       r.isError,
-					ContentBlocks: r.contentBlocks,
+					IsError:       result.isError,
+					ContentBlocks: result.contentBlocks,
 				})
 			}
 
 			// 聚合预算：一轮并行工具的结果落在同一条消息里，单条阈值管不住
 			// 合计超限的情况。进历史前把整批处理完，消息一出生就是终态。
-			toolresult.ApplyBudget(toolResults, exempt, a.WorkDir, a.SessionID)
+			toolresult.ApplyBudget(toolResults, exempt, a.WorkDir, r.SessionID)
 
 			exitPlanCalled := false
 			for _, tc := range toolCalls {
@@ -518,7 +615,7 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 				}
 			}
 			conv.AddToolResultsMessage(toolResults)
-			a.persistLastMessage(conv)
+			a.persistLastMessage(conv, r.SessionID)
 
 			// 非阻塞 memory recall：工具执行完后检查 prefetch 是否就绪
 			if a.MemoryRecallCh != nil {
@@ -529,6 +626,7 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 						// 真正进了对话才算「已注入」。这一轮没消费掉的召回结果
 						// 不留痕，下一轮召回时这些记忆还能参选。
 						a.MarkMemoriesSurfaced(recall.Paths)
+						r.record(ctx, TraceEvent{Type: TraceMemoryRecalled, Source: TraceSourceMemory, Iteration: iteration, Payload: map[string]any{"count": len(recall.Paths)}})
 					}
 					a.MemoryRecallCh = nil // 只消费一次
 				default:
@@ -539,6 +637,7 @@ func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan Agen
 			if exitPlanCalled {
 				ch <- TurnComplete{Turn: iteration}
 				ch <- LoopComplete{TotalTurns: iteration}
+				finishReason = RunCompleted
 				return
 			}
 			ch <- TurnComplete{Turn: iteration}
@@ -768,13 +867,13 @@ func formatToolArgs(args map[string]any) string {
 // 落盘点放在主循环而不是各个前端：TUI 和 Web 共用同一条记录路径，
 // 中间轮次的助手文本和完整的工具调用链都会被记下来，恢复会话时才能还原。
 // WorkDir 或 SessionID 为空时（一次性调用、子 Agent）跳过，不写盘。
-func (a *Agent) persistLastMessage(conv *conversation.Manager) {
-	if a.WorkDir == "" || a.SessionID == "" {
+func (a *Agent) persistLastMessage(conv *conversation.Manager, sessionID string) {
+	if a.WorkDir == "" || sessionID == "" {
 		return
 	}
 	msgs := conv.GetMessages()
 	if len(msgs) == 0 {
 		return
 	}
-	session.SaveMessage(a.WorkDir, a.SessionID, session.FromConversation(msgs[len(msgs)-1]))
+	session.SaveMessage(a.WorkDir, sessionID, session.FromConversation(msgs[len(msgs)-1]))
 }

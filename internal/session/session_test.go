@@ -297,6 +297,20 @@ func TestToolBlocksRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSessionPreservesRunID(t *testing.T) {
+	dir := t.TempDir()
+	const sessionID = "run-boundary"
+	SaveMessage(dir, sessionID, FromConversation(conversation.Message{Role: "user", Content: "prompt", RunID: "run-1"}))
+	loaded := LoadSession(dir, sessionID)
+	if len(loaded) != 1 || loaded[0].RunID != "run-1" || loaded[0].ToConversation().RunID != "run-1" {
+		t.Fatalf("run id did not round-trip: %+v", loaded)
+	}
+	keep := FromConversationKeep(conversation.Message{Role: "assistant", Content: "answer", RunID: "run-1"})
+	if keep.RunID != "run-1" || keep.ToConversation().RunID != "run-1" {
+		t.Fatalf("kept run id did not round-trip: %+v", keep)
+	}
+}
+
 // 只带工具结果的消息本身没有文本，不能被按空内容过滤掉。
 func TestLoadKeepsEmptyContentToolResult(t *testing.T) {
 	dir := t.TempDir()

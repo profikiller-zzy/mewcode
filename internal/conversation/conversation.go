@@ -33,6 +33,9 @@ type Message struct {
 	ThinkingBlocks []ThinkingBlock
 	ToolUses       []ToolUseBlock
 	ToolResults    []ToolResultBlock
+	// RunID identifies the independent user request that produced this message.
+	// Empty is retained for legacy sessions and session-level reminders.
+	RunID string
 }
 
 type Manager struct {
@@ -41,6 +44,7 @@ type Manager struct {
 	baselineTokens int //上次请求LLM API返回的精确token数
 	anchorCount    int
 	hasUsage       bool
+	activeRunID    string
 }
 
 func NewManager() *Manager {
@@ -48,17 +52,18 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) AddUserMessage(content string) {
-	m.history = append(m.history, Message{Role: "user", Content: content})
+	m.history = append(m.history, Message{Role: "user", Content: content, RunID: m.activeRunID})
 }
 
 func (m *Manager) AddAssistantMessage(content string) {
-	m.history = append(m.history, Message{Role: "assistant", Content: content})
+	m.history = append(m.history, Message{Role: "assistant", Content: content, RunID: m.activeRunID})
 }
 
 func (m *Manager) AddToolUseMessage(text, toolUseID, toolName string, arguments map[string]any) {
 	m.history = append(m.history, Message{
 		Role:    "assistant",
 		Content: text,
+		RunID:   m.activeRunID,
 		ToolUses: []ToolUseBlock{{
 			ToolUseID: toolUseID,
 			ToolName:  toolName,
@@ -72,6 +77,7 @@ func (m *Manager) AddAssistantMessageWithTools(text string, toolUses []ToolUseBl
 		Role:     "assistant",
 		Content:  text,
 		ToolUses: toolUses,
+		RunID:    m.activeRunID,
 	})
 }
 
@@ -81,12 +87,14 @@ func (m *Manager) AddAssistantFull(text string, thinking []ThinkingBlock, toolUs
 		Content:        text,
 		ThinkingBlocks: thinking,
 		ToolUses:       toolUses,
+		RunID:          m.activeRunID,
 	})
 }
 
 func (m *Manager) AddToolResultMessage(toolUseID, content string, isError bool) {
 	m.history = append(m.history, Message{
-		Role: "user",
+		Role:  "user",
+		RunID: m.activeRunID,
 		ToolResults: []ToolResultBlock{{
 			ToolUseID: toolUseID,
 			Content:   content,
@@ -99,6 +107,7 @@ func (m *Manager) AddToolResultsMessage(results []ToolResultBlock) {
 	m.history = append(m.history, Message{
 		Role:        "user",
 		ToolResults: results,
+		RunID:       m.activeRunID,
 	})
 }
 
@@ -106,7 +115,108 @@ func (m *Manager) AddSystemReminder(content string) {
 	m.history = append(m.history, Message{
 		Role:    "user",
 		Content: "<system-reminder>\n" + content + "\n</system-reminder>",
+		RunID:   m.activeRunID,
 	})
+}
+
+// BeginRun establishes the boundary for an independent user request. Messages
+// appended until EndRun inherit runID. For backward-compatible callers that
+// add the prompt before starting the run, the most recent unassigned user
+// message is claimed by this run.
+func (m *Manager) BeginRun(runID string) {
+	m.activeRunID = runID
+	for i := len(m.history) - 1; i >= 0; i-- {
+		msg := &m.history[i]
+		if msg.RunID != "" {
+			break
+		}
+		if msg.Role == "user" && len(msg.ToolResults) == 0 && !strings.HasPrefix(msg.Content, "<system-reminder>") {
+			msg.RunID = runID
+			break
+		}
+	}
+}
+
+// EndRun clears the append-time run marker without changing recorded messages.
+func (m *Manager) EndRun() { m.activeRunID = "" }
+
+// ActiveRunID returns the run currently appending to this conversation.
+func (m *Manager) ActiveRunID() string { return m.activeRunID }
+
+// Clone creates an isolated snapshot suitable for one AgentRun. Message slices
+// and nested tool payloads are copied so a failed or concurrent run cannot
+// mutate the session's committed transcript.
+func (m *Manager) Clone() *Manager {
+	clone := &Manager{
+		ltmInjected:    m.ltmInjected,
+		baselineTokens: m.baselineTokens,
+		anchorCount:    m.anchorCount,
+		hasUsage:       m.hasUsage,
+		activeRunID:    m.activeRunID,
+	}
+	clone.history = cloneMessages(m.history)
+	return clone
+}
+
+// ReplaceWith commits a completed run snapshot back to its owning session.
+func (m *Manager) ReplaceWith(other *Manager) {
+	if other == nil {
+		return
+	}
+	*m = *other.Clone()
+}
+
+func cloneMessages(messages []Message) []Message {
+	out := make([]Message, len(messages))
+	for i, msg := range messages {
+		out[i] = msg
+		out[i].ThinkingBlocks = append([]ThinkingBlock(nil), msg.ThinkingBlocks...)
+		out[i].ToolUses = append([]ToolUseBlock(nil), msg.ToolUses...)
+		for j := range out[i].ToolUses {
+			out[i].ToolUses[j].Arguments = cloneMap(msg.ToolUses[j].Arguments)
+		}
+		out[i].ToolResults = append([]ToolResultBlock(nil), msg.ToolResults...)
+		for j := range out[i].ToolResults {
+			blocks := msg.ToolResults[j].ContentBlocks
+			out[i].ToolResults[j].ContentBlocks = make([]map[string]any, len(blocks))
+			for k := range blocks {
+				out[i].ToolResults[j].ContentBlocks[k] = cloneMap(blocks[k])
+			}
+		}
+	}
+	return out
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = cloneValue(v)
+	}
+	return out
+}
+
+func cloneValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = cloneValue(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(typed))
+		for i, item := range typed {
+			out[i] = cloneMap(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 // HasReminderContaining 报告历史里还有没有包含 marker 的提醒。

@@ -39,7 +39,8 @@ type ToolResultRecord struct {
 }
 
 type Message struct {
-	Role string `json:"role"`
+	Role  string `json:"role"`
+	RunID string `json:"run_id,omitempty"`
 	// Type distinguishes record kinds. Empty (the default, omitted from JSON)
 	// means a plain conversation message; TypeCompactBoundary means Content is a
 	// CompactBoundary JSON blob written by SaveCompactBoundary.
@@ -57,6 +58,7 @@ type Message struct {
 func FromConversation(msg conversation.Message) Message {
 	rec := Message{
 		Role:    msg.Role,
+		RunID:   msg.RunID,
 		Content: msg.Content,
 		Ts:      time.Now().Unix(),
 	}
@@ -82,6 +84,7 @@ func (m Message) ToConversation() conversation.Message {
 	msg := conversation.Message{
 		Role:    m.Role,
 		Content: m.Content,
+		RunID:   m.RunID,
 	}
 	for _, tu := range m.ToolUses {
 		msg.ToolUses = append(msg.ToolUses, conversation.ToolUseBlock{
@@ -104,6 +107,7 @@ func (m Message) ToConversation() conversation.Message {
 // 工具块，压缩后恢复会话时这段尾巴才不会缺掉工具调用链。
 type KeepMessage struct {
 	Role        string             `json:"role"`
+	RunID       string             `json:"run_id,omitempty"`
 	Content     string             `json:"content"`
 	ToolUses    []ToolUseRecord    `json:"tool_uses,omitempty"`
 	ToolResults []ToolResultRecord `json:"tool_results,omitempty"`
@@ -114,12 +118,22 @@ func FromConversationKeep(msg conversation.Message) KeepMessage {
 	rec := FromConversation(msg)
 	return KeepMessage{
 		Role:        rec.Role,
+		RunID:       rec.RunID,
 		Content:     rec.Content,
 		ToolUses:    rec.ToolUses,
 		ToolResults: rec.ToolResults,
 	}
 }
 
+func (m KeepMessage) ToConversation() conversation.Message {
+	return Message{
+		Role:        m.Role,
+		RunID:       m.RunID,
+		Content:     m.Content,
+		ToolUses:    m.ToolUses,
+		ToolResults: m.ToolResults,
+	}.ToConversation()
+}
 
 // CompactBoundary is the structured payload stored (as JSON) in the Content of a
 // TypeCompactBoundary record. Summary is the LLM-produced summary of the

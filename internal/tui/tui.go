@@ -4040,6 +4040,7 @@ func (m Model) doResumeSession(wd, targetID string, sessions []session.SessionIn
 		for _, k := range boundary.Keep {
 			replay = append(replay, session.Message{
 				Role:        k.Role,
+				RunID:       k.RunID,
 				Content:     k.Content,
 				ToolUses:    k.ToolUses,
 				ToolResults: k.ToolResults,

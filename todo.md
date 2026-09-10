@@ -7,7 +7,7 @@
   - 预期方向：明确忙时输入策略；若采用 FIFO，同一会话的新请求应入队，等待当前 Run 确认退出后再执行，并向 UI 反馈排队状态。若扩展多会话，应按 sessionID 隔离运行状态，允许不同会话并发。
   - 验收：运行中提交的输入不会静默丢失；同一会话不会同时执行多个 Run；并发客户端提交时行为一致，UI 能确认请求已排队或被明确拒绝。
 
-- [ ] 按“Agent Loop → Agent Run → Client.Stream”三层重构 ReAct 执行架构
+- [x] 按“Agent Loop → Agent Run → Client.Stream”三层重构 ReAct 执行架构
   - 目标：让用户会话调度、一次独立请求的 ReAct 循环、一次大模型 API 请求分别承担清晰且互不重叠的职责。
   - `Agent Loop`（会话调度层）
     - 负责 session 生命周期和 session 状态管理；不同 session 可以并行执行，同一 session 内的请求必须 FIFO。

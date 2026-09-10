@@ -34,6 +34,24 @@ type StreamingExecutor struct {
 	mu      sync.Mutex
 	calls   []toolCallInfo
 	results []toolExecResult
+	onStart func(toolCallInfo)
+	onEnd   func(toolExecResult)
+}
+
+func (se *StreamingExecutor) SetObserver(onStart func(toolCallInfo), onEnd func(toolExecResult)) {
+	se.onStart = onStart
+	se.onEnd = onEnd
+}
+
+func (se *StreamingExecutor) execute(ctx context.Context, agent *Agent, tc toolCallInfo) toolExecResult {
+	if se.onStart != nil {
+		se.onStart(tc)
+	}
+	result := agent.executeSingleTool(ctx, se.eventCh, tc)
+	if se.onEnd != nil {
+		se.onEnd(result)
+	}
+	return result
 }
 
 func NewStreamingExecutor(registry *tools.Registry, eventCh chan AgentEvent) *StreamingExecutor {
@@ -75,7 +93,7 @@ func (se *StreamingExecutor) ExecuteAll(ctx context.Context, agent *Agent) []too
 				wg.Add(1)
 				go func(e toolCallEntry) {
 					defer wg.Done()
-					r := agent.executeSingleTool(ctx, se.eventCh, e.tc)
+					r := se.execute(ctx, agent, e.tc)
 					se.mu.Lock()
 					results[e.index] = r
 					se.mu.Unlock()
@@ -85,7 +103,7 @@ func (se *StreamingExecutor) ExecuteAll(ctx context.Context, agent *Agent) []too
 		} else {
 			// 写/命令批：串行执行
 			for _, entry := range batch.calls {
-				r := agent.executeSingleTool(ctx, se.eventCh, entry.tc)
+				r := se.execute(ctx, agent, entry.tc)
 				results[entry.index] = r
 			}
 		}

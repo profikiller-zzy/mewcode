@@ -400,6 +400,41 @@ func TestComputeKeepStartIndexDoesNotSplitToolPair(t *testing.T) {
 	}
 }
 
+func TestComputeKeepStartIndexDoesNotSplitAgentRun(t *testing.T) {
+	var messages []conversation.Message
+	appendRun := func(runID string, runMessages ...conversation.Message) {
+		for _, message := range runMessages {
+			message.RunID = runID
+			messages = append(messages, message)
+		}
+	}
+	appendRun("old", conversation.Message{Role: "user", Content: bigMsg(30000)}, conversation.Message{Role: "assistant", Content: "old answer"})
+	appendRun("tool-run",
+		conversation.Message{Role: "user", Content: "read a file"},
+		conversation.Message{Role: "assistant", ToolUses: []conversation.ToolUseBlock{{ToolUseID: "t1", ToolName: "ReadFile"}}},
+		conversation.Message{Role: "user", ToolResults: []conversation.ToolResultBlock{{ToolUseID: "t1", Content: bigMsg(6000)}}},
+		conversation.Message{Role: "assistant", Content: "file read complete"},
+	)
+	appendRun("latest", conversation.Message{Role: "user", Content: "latest"}, conversation.Message{Role: "assistant", Content: "latest answer"})
+
+	keepStart := computeKeepStartIndex(messages)
+	if keepStart <= 0 || keepStart >= len(messages) {
+		t.Fatalf("keepStart=%d out of expected range", keepStart)
+	}
+	prefixIDs := map[string]bool{}
+	for _, message := range messages[:keepStart] {
+		prefixIDs[message.RunID] = true
+	}
+	for _, message := range messages[keepStart:] {
+		if prefixIDs[message.RunID] {
+			t.Fatalf("run %q was split by compaction boundary %d", message.RunID, keepStart)
+		}
+	}
+	if messages[keepStart].RunID != "tool-run" {
+		t.Fatalf("expected whole tool-run in kept tail, got %q", messages[keepStart].RunID)
+	}
+}
+
 // When the conversation is too short to have any summarizable prefix (keepStart
 // <= 0), autoCompact must degrade to a no-op: no summarization, conversation
 // left untouched.
