@@ -9,13 +9,13 @@ import (
 	"mewcode/internal/tools"
 )
 
-// StartInProcessMember registers a teammate on the team and launches its long-running main loop in
-// a background goroutine. The returned channel forwards every AgentEvent emitted across all turns;
-// it closes when the loop exits (ctx cancellation or shutdown request in the inbox).
+// StartInProcessMember 把一个 teammate 注册进团队，并在后台 goroutine 里启动
+// 它长期运行的主循环。返回的 channel 会转发所有轮次中产生的每个 AgentEvent；
+// 循环退出时（ctx 被取消，或收到收件箱里的关闭请求）channel 随之关闭。
 //
-// The lifecycle of the goroutine is bound to ctx: the caller cancels ctx to stop the teammate. Each
-// pass through the loop calls RunInProcessTeammate, which handles waiting, agent execution, and
-// idle notification.
+// goroutine 的生命周期绑定在 ctx 上：调用方取消 ctx 即可停掉这个 teammate。
+// 循环每转一圈就调用一次 RunInProcessTeammate，由它处理等待、
+// agent 执行和空闲通知。
 func StartInProcessMember(
 	ctx context.Context,
 	team *Team,
@@ -50,8 +50,8 @@ func StartInProcessMember(
 	return eventCh
 }
 
-// BuildTeammateAddendum creates the system-reminder text injected at the top of every teammate's
-// conversation. It tells the model its identity, who else is on the team, and how to send messages.
+// BuildTeammateAddendum 生成注入到每个 teammate 对话顶部的 system-reminder 文本。
+// 它告诉模型自己的身份、团队里还有谁，以及怎么发消息。
 func BuildTeammateAddendum(teamName, memberName string, otherMembers []string) string {
 	var sb strings.Builder
 	sb.WriteString("You are a member of team \"" + teamName + "\". Your name is \"" + memberName + "\".\n\n")
@@ -65,9 +65,9 @@ func BuildTeammateAddendum(teamName, memberName string, otherMembers []string) s
 	return sb.String()
 }
 
-// InjectPendingMessages returns any unread mailbox messages formatted as a system-reminder string
-// and marks them read. It is called at the top of every teammate turn by RunInProcessTeammate; the
-// empty return means no new mail.
+// InjectPendingMessages 把未读的邮箱消息格式化成 system-reminder 字符串返回，
+// 并把它们标记为已读。RunInProcessTeammate 会在每个 teammate 轮次开始时调用它；
+// 返回空字符串表示没有新消息。
 func InjectPendingMessages(team *Team, memberName string) string {
 	msgs, err := team.MailBox.ReadUnread(memberName)
 	if err != nil || len(msgs) == 0 {

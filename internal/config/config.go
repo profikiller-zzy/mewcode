@@ -41,44 +41,44 @@ type ProviderConfig struct {
 	ContextWindow   int    `yaml:"context_window"`
 	MaxOutputTokens int    `yaml:"max_output_tokens"`
 
-	// fetchedContextWindow caches the max_input_tokens auto-pulled from the
-	// provider's /v1/models endpoint (layer 2 of GetContextWindow). Populated
-	// once at client init via SetFetchedContextWindow; 0 means "not fetched".
-	// Not a yaml field — it's a runtime cache, never persisted.
+	// fetchedContextWindow 缓存从 provider 的 /v1/models 端点自动拉取的
+	// max_input_tokens（GetContextWindow 的第 2 层）。在 client 初始化时
+	// 通过 SetFetchedContextWindow 填一次；0 表示「没拉到」。
+	// 不是 yaml 字段 —— 它只是个运行时缓存，从不持久化。
 	fetchedContextWindow int
 }
 
-// modelContextWindows maps a model-name substring to its context window
-// (max input tokens). Matched from most specific to most generic; the first
-// substring hit wins. Values are reasonable starting points only — they may
-// drift as models are updated/renamed. When a value is wrong, set
-// `context_window` in config to override (that takes top priority).
+// modelContextWindows 把模型名子串映射到它的 context window
+// （最大输入 token 数）。从最具体到最宽泛依次匹配，第一个
+// 命中的子串生效。这些值只是靠谱的起点 —— 模型
+// 更新/改名后可能会漂移。某个值不对时，在 config 里设
+// `context_window` 覆盖（它优先级最高）。
 var modelContextWindows = []struct {
 	substr string
 	window int
 }{
-	{"1m", 1000000},      // also covers "-1m" suffixes (e.g. claude-...-1m)
-	{"gpt-4.1", 1000000}, // GPT-4.1 family ships a 1M window
+	{"1m", 1000000},      // 同时覆盖 "-1m" 后缀（比如 claude-...-1m）
+	{"gpt-4.1", 1000000}, // GPT-4.1 系列带 1M 窗口
 	{"gpt-4o", 128000},
 	{"gpt-4-turbo", 128000},
-	{"o1", 200000}, // OpenAI reasoning models o1 / o3 / o4
+	{"o1", 200000}, // OpenAI 推理模型 o1 / o3 / o4
 	{"o3", 200000},
 	{"o4", 200000},
 	{"gpt-3.5", 16385},
 	{"claude", 200000},
 }
 
-// SetFetchedContextWindow records the context window auto-pulled from the
-// provider (layer 2). A non-positive value is ignored so a failed fetch never
-// pollutes the cache. Called once per provider at client init.
+// SetFetchedContextWindow 记录从 provider 自动拉取的 context window
+// （第 2 层）。非正数会被忽略，这样拉取失败永远不会污染缓存。
+// 每个 provider 在 client 初始化时调用一次。
 func (p *ProviderConfig) SetFetchedContextWindow(window int) {
 	if window > 0 {
 		p.fetchedContextWindow = window
 	}
 }
 
-// lookupModelContextWindow returns the built-in mapping-table window for the
-// given model via substring match (layer 3), or 0 if nothing matches.
+// lookupModelContextWindow 通过子串匹配返回给定模型在内置映射表里的
+// 窗口（第 3 层），没匹配到就返回 0。
 func lookupModelContextWindow(model string) int {
 	m := strings.ToLower(model)
 	for _, e := range modelContextWindows {
@@ -89,15 +89,15 @@ func lookupModelContextWindow(model string) int {
 	return 0
 }
 
-// GetContextWindow resolves the model's context window with four layers of
-// fallback, highest priority first:
+// GetContextWindow 用四层回退解析模型的 context window，
+// 优先级从高到低：
 //
-//  1. config-supplied context_window (> 0) — explicit override, always wins.
-//  2. value auto-fetched from the provider's /v1/models endpoint, cached via
-//     SetFetchedContextWindow (only Anthropic-protocol providers ever set it;
-//     a failed/absent fetch leaves it 0 and is skipped).
-//  3. built-in model-name → window mapping table (substring match).
-//  4. conservative default (claude → 200000, otherwise → 128000).
+//  1. config 里给的 context_window（> 0）—— 显式覆盖，总是优先。
+//  2. 从 provider 的 /v1/models 端点自动拉取并缓存的值，通过
+//     SetFetchedContextWindow 设置（只有 Anthropic 协议的 provider 会设；
+//     拉取失败或没拉到就保持 0，跳过这一层）。
+//  3. 内置的模型名 → 窗口映射表（子串匹配）。
+//  4. 保守默认值（claude → 200000，其他 → 128000）。
 func (p *ProviderConfig) GetContextWindow() int {
 	if p.ContextWindow > 0 {
 		return p.ContextWindow

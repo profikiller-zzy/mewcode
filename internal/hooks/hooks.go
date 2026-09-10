@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// defaultHookTimeout is the cap applied when a hook config doesn't set its own `timeout`.
+// defaultHookTimeout 是当 hook 配置没有自带 `timeout` 时套用的上限。
 const defaultHookTimeout = 10 * time.Minute
 
 type EventName string
@@ -62,10 +62,10 @@ type Hook struct {
 	Reject    bool      `yaml:"reject"`
 	Once      bool      `yaml:"once"`
 	Async     bool      `yaml:"async"`
-	// OnError controls behaviour when the action fails.
-	//   "fail"   — propagate the error (default for blocking hooks)
-	//   "ignore" — log and continue
-	//   "reject" — treat hook failure as a reject (pre_tool_use only)
+	// OnError 控制 action 执行失败时的行为。
+	//   "fail"   — 把错误继续抛出去（阻塞式 hook 的默认值）
+	//   "ignore" — 记录日志后继续
+	//   "reject" — 把 hook 失败当成一次拒绝（仅 pre_tool_use）
 	OnError string `yaml:"on_error"`
 }
 
@@ -89,9 +89,9 @@ type Engine struct {
 	mu            sync.Mutex
 	hooks         []Hook
 	notifications []HookResult
-	fired         map[string]bool // hook IDs that fired (for `once`)
-	// AgentRunner executes agent-type hooks. Optional — when nil, agent hooks
-	// return a clear "no runner registered" error rather than silently failing.
+	fired         map[string]bool // 已经触发过的 hook ID（用于 `once`）
+	// AgentRunner 执行 agent 类型的 hook。可选 —— 为 nil 时，agent hook
+	// 会返回一个明确的 "no runner registered" 错误，而不是静默失败。
 	AgentRunner func(prompt string, ctx HookContext) (string, error)
 }
 
@@ -99,9 +99,9 @@ func NewEngine() *Engine {
 	return &Engine{fired: make(map[string]bool)}
 }
 
-// validEventNames is the whitelist of event names accepted by Validate.
-// Sourced from the EventName constants above so adding a new event is a
-// single-line change there, not two.
+// validEventNames 是 Validate 接受的事件名白名单。
+// 它直接取自上面的 EventName 常量，所以新增事件只需要在那里改一行，
+// 不用改两处。
 var validEventNames = map[EventName]bool{
 	EventSessionStart: true,
 	EventSessionEnd:   true,
@@ -114,14 +114,14 @@ var validEventNames = map[EventName]bool{
 	EventShutdown:     true,
 }
 
-// Validate checks a slice of hooks for configuration mistakes that would
-// otherwise surface as silent misbehaviour at run time. Each action type has
-// its own required fields; URL hooks need a parseable http(s) URL; timeout
-// must be non-negative.
+// Validate 检查一组 hook 的配置错误，这些错误在运行时只会表现为
+// 静默的异常行为。每种 action 类型都有各自必填的字段；
+// URL hook 需要一个可解析的 http(s) URL；timeout
+// 必须非负。
 //
-// All errors are aggregated via errors.Join so a single call surfaces every
-// problem at once instead of bailing on the first. Each error is prefixed
-// with the hook id (or index when id is empty) and the offending field.
+// 所有错误都通过 errors.Join 聚合成一个返回，这样一次调用就能把
+// 全部问题报出来，而不是遇到第一个就退出。每条错误都会带上
+// hook id（id 为空时用下标）和出问题的字段名作为前缀。
 func Validate(hooks []Hook) error {
 	var errs []error
 	for i, h := range hooks {
@@ -202,8 +202,8 @@ func (e *Engine) RunHooks(ctx HookContext) []HookResult {
 	return results
 }
 
-// RunPreToolHooks runs pre-tool-use hooks. Returns (rejected, message).
-// Non-reject hooks still run for their side effects (notifications/HTTP/etc).
+// RunPreToolHooks 执行 pre-tool-use hook。返回 (rejected, message)。
+// 不拒绝的 hook 也会执行，因为它们可能带来副作用（通知/HTTP 等）。
 func (e *Engine) RunPreToolHooks(ctx HookContext) (bool, string) {
 	for _, h := range e.snapshotHooks() {
 		if h.Event != EventPreToolUse {
@@ -214,7 +214,7 @@ func (e *Engine) RunPreToolHooks(ctx HookContext) (bool, string) {
 		}
 		result := e.executeAction(h, ctx)
 		e.recordNotification(result)
-		// A hook may reject by config or by failing with on_error=reject.
+		// hook 可能是配置成拒绝，也可能是以 on_error=reject 的方式失败。
 		if h.Reject || (!result.Success && h.OnError == "reject") {
 			msg := result.Output
 			if msg == "" {
@@ -265,21 +265,21 @@ func (e *Engine) DrainNotifications() []HookResult {
 	return n
 }
 
-// evaluateCondition supports:
-//   - leaf: `var == "value"`, `var =~ /regex/`, `var =* "glob"`, `var != "value"`
-//   - composite: `cond1 && cond2`, `cond1 || cond2`
-//   - inverse: `!cond` (must precede the leaf, not split across operators)
+// evaluateCondition 支持：
+//   - 叶子条件：`var == "value"`、`var =~ /regex/`、`var =* "glob"`、`var != "value"`
+//   - 组合条件：`cond1 && cond2`、`cond1 || cond2`
+//   - 取反：`!cond`（必须写在叶子条件之前，不能跨操作符拆分）
 //
-// Parentheses are not supported; composition is strictly left-to-right with
-// `&&` and `||` at the same precedence (consistent with simple shell style).
+// 不支持括号；组合严格从左到右，`&&` 和 `||`
+// 优先级相同（与简单 shell 风格一致）。
 func evaluateCondition(condition string, ctx HookContext) bool {
 	condition = strings.TrimSpace(condition)
 	if condition == "" {
 		return true
 	}
-	// Composite: walk the string, splitting on top-level && and ||.
-	// We don't support quoting that contains those operators since hook
-	// conditions are configured by the user — keep parsing dumb-and-obvious.
+	// 组合条件：遍历字符串，按顶层的 && 和 || 拆分。
+	// 我们不支持包含这两个操作符的引号，因为 hook 条件是用户自己配的 ——
+	// 解析逻辑就保持简单直白。
 	if tokens := splitComposite(condition); len(tokens) > 1 {
 		result := evaluateCondition(tokens[0].expr, ctx)
 		for i := 1; i < len(tokens); i++ {
@@ -301,7 +301,7 @@ func evaluateCondition(condition string, ctx HookContext) bool {
 }
 
 type compToken struct {
-	op   string // "" for the first token, then "&&" or "||"
+	op   string // 第一个 token 为 ""，之后是 "&&" 或 "||"
 	expr string
 }
 
@@ -320,7 +320,7 @@ func splitComposite(s string) []compToken {
 	}
 	out = append(out, compToken{op: cur, expr: strings.TrimSpace(s[start:])})
 	if len(out) == 1 {
-		// No splits found.
+		// 没有找到可拆分的位置。
 		return nil
 	}
 	return out
@@ -347,7 +347,7 @@ func evaluateLeaf(condition string, ctx HookContext) bool {
 			}
 		}
 	}
-	// No operator → treat as a truthy variable check.
+	// 没有操作符 → 当成变量是否为真的判断。
 	return resolveVar(condition, ctx) != ""
 }
 
@@ -397,9 +397,9 @@ func (e *Engine) executeAction(h Hook, ctx HookContext) HookResult {
 	}
 }
 
-// runAgent invokes the optional AgentRunner with the hook's Message as a
-// one-shot prompt. Returns a clear error when no runner is configured so
-// users learn they need to wire up agent-type hooks in their main entry.
+// runAgent 把 hook 的 Message 当作一次性 prompt 调用可选的 AgentRunner。
+// 没有配置 runner 时返回明确的错误，让用户知道需要在 main 入口里
+// 把 agent 类型的 hook 接起来。
 func (e *Engine) runAgent(h Hook, ctx HookContext) HookResult {
 	if e.AgentRunner == nil {
 		return HookResult{
@@ -444,10 +444,10 @@ func runCommand(h Hook, ctx HookContext) HookResult {
 	}
 	output = strings.TrimSpace(output)
 
-	// Distinguish timeout from generic exec failure so users (and downstream
-	// notifications) can tell why a hook bailed. CommandContext kills the
-	// child via SIGKILL on deadline; the Run error itself is a vague
-	// *exec.ExitError, so we check the context.
+	// 把超时和普通的 exec 失败区分开，这样用户（以及下游的通知）
+	// 能知道 hook 为什么退出。CommandContext 在到期时会用
+	// SIGKILL 杀掉子进程；而 Run 返回的错误本身是含糊的
+	// *exec.ExitError，所以我们改为检查 context。
 	if execCtx.Err() == context.DeadlineExceeded {
 		msg := fmt.Sprintf("command timed out after %s", timeout)
 		if output != "" {

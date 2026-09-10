@@ -10,9 +10,9 @@ import (
 	"mewcode/internal/tools"
 )
 
-// stubHost captures every SkillHost call so tests can verify the executor
-// fired the right side effects. Implements both SkillHost and SkillForkHost
-// so the same fixture covers RunInline and RunFork.
+// stubHost 记录每一次 SkillHost 调用，好让测试验证 executor
+// 触发了正确的副作用。它同时实现 SkillHost 和 SkillForkHost，
+// 这样同一份 fixture 就能覆盖 RunInline 和 RunFork。
 type stubHost struct {
 	activated     map[string]string
 	registry      *tools.Registry

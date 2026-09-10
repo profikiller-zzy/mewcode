@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// WorktreeSession tracks the state of an active worktree session.
+// WorktreeSession 记录一个活跃 worktree session 的状态。
 type WorktreeSession struct {
 	OriginalCwd        string `json:"original_cwd"`
 	WorktreePath       string `json:"worktree_path"`
@@ -22,33 +22,33 @@ type WorktreeSession struct {
 	CreationDurationMs int64  `json:"creation_duration_ms,omitempty"`
 }
 
-// Module-level singleton + mutex.
+// 模块级单例 + 互斥锁。
 var (
 	currentWorktreeSession *WorktreeSession
 	sessionMu              sync.RWMutex
 )
 
-// GetCurrentWorktreeSession returns the active worktree session, or nil.
+// GetCurrentWorktreeSession 返回当前活跃的 worktree session，没有则返回 nil。
 func GetCurrentWorktreeSession() *WorktreeSession {
 	sessionMu.RLock()
 	defer sessionMu.RUnlock()
 	return currentWorktreeSession
 }
 
-// RestoreWorktreeSession restores a session on --resume. The caller must have already verified the
-// directory exists and set bootstrap state.
+// RestoreWorktreeSession 在 --resume 时恢复一个 session。调用方必须已经
+// 确认目录存在，并已设置好 bootstrap 状态。
 func RestoreWorktreeSession(session *WorktreeSession) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 	currentWorktreeSession = session
 }
 
-// sessionFilePath returns the path to the session persistence file.
+// sessionFilePath 返回 session 持久化文件的路径。
 func sessionFilePath(repoRoot string) string {
 	return filepath.Join(repoRoot, ".mewcode", "worktree_session.json")
 }
 
-// SaveWorktreeSession persists session state to disk. Pass nil to clear.
+// SaveWorktreeSession 把 session 状态持久化到磁盘。传 nil 表示清除。
 func SaveWorktreeSession(repoRoot string, session *WorktreeSession) error {
 	path := sessionFilePath(repoRoot)
 	if session == nil {
@@ -65,8 +65,8 @@ func SaveWorktreeSession(repoRoot string, session *WorktreeSession) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// LoadWorktreeSession reads a previously persisted session from disk. Returns (nil, nil) if the
-// file does not exist.
+// LoadWorktreeSession 从磁盘读取之前持久化的 session。
+// 文件不存在时返回 (nil, nil)。
 func LoadWorktreeSession(repoRoot string) (*WorktreeSession, error) {
 	path := sessionFilePath(repoRoot)
 	data, err := os.ReadFile(path)
@@ -83,7 +83,7 @@ func LoadWorktreeSession(repoRoot string) (*WorktreeSession, error) {
 	return &session, nil
 }
 
-// CreateWorktreeForSession creates or resumes a worktree and sets up the global session singleton.
+// CreateWorktreeForSession 创建或恢复一个 worktree，并设置全局的 session 单例。
 func CreateWorktreeForSession(ctx context.Context, sessionID, slug, repoRoot string) (*WorktreeSession, error) {
 	if err := ValidateWorktreeSlug(slug); err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func CreateWorktreeForSession(ctx context.Context, sessionID, slug, repoRoot str
 	return session, nil
 }
 
-// KeepWorktree preserves the worktree on disk and clears session state.
+// KeepWorktree 保留磁盘上的 worktree，并清空 session 状态。
 func KeepWorktree(repoRoot string) error {
 	sessionMu.Lock()
 	session := currentWorktreeSession
@@ -146,7 +146,7 @@ func KeepWorktree(repoRoot string) error {
 	return nil
 }
 
-// CleanupWorktree removes the worktree and its temporary branch, then clears session state.
+// CleanupWorktree 删除 worktree 及其临时分支，然后清空 session 状态。
 func CleanupWorktree(ctx context.Context, repoRoot string) error {
 	sessionMu.Lock()
 	session := currentWorktreeSession
@@ -161,16 +161,16 @@ func CleanupWorktree(ctx context.Context, repoRoot string) error {
 		return err
 	}
 
-	// Remove the worktree directory via git.
+	// 通过 git 删除 worktree 目录。
 	_, _, code := runGit(ctx, session.OriginalCwd,
 		"worktree", "remove", "--force", session.WorktreePath)
 	if code != 0 {
-		// best-effort: proceed to branch cleanup.
+		// 尽力而为：继续清理分支。
 	}
 
-	// Delete the temporary branch.
+	// 删除临时分支。
 	if session.WorktreeBranch != "" {
-		// Wait for git lockfile release.
+		// 等 git 的 lockfile 释放。
 		time.Sleep(100 * time.Millisecond)
 		runGit(ctx, session.OriginalCwd, "branch", "-D", session.WorktreeBranch)
 	}

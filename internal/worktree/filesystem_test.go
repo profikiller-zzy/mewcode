@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// initBareRepoWithCommit creates a regular git repo at root with one commit on
-// the default branch. Returns the HEAD SHA of that commit. Skips the test if
-// git isn't on PATH.
+// initBareRepoWithCommit 在 root 下建一个普通的 git 仓库，
+// 默认分支上带一个提交，返回该提交的 HEAD SHA。
+// git 不在 PATH 上就跳过测试。
 func initBareRepoWithCommit(t *testing.T, root string) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -111,7 +111,7 @@ func TestReadWorktreeHeadSha_RoundTrip(t *testing.T) {
 		t.Errorf("ReadWorktreeHeadSha = %q, not a valid SHA", got)
 	}
 
-	// Cross-check with `git rev-parse HEAD` in the worktree.
+	// 与 worktree 里的 `git rev-parse HEAD` 交叉验证。
 	rp := exec.Command("git", "rev-parse", "HEAD")
 	rp.Dir = wtPath
 	out, err := rp.CombinedOutput()
@@ -142,7 +142,7 @@ func TestResolveRef_LooseRef(t *testing.T) {
 		t.Fatalf("ResolveGitDir error: %v", err)
 	}
 
-	// Default branch name varies (main or master); read HEAD to discover it.
+	// 默认分支名不固定（main 或 master）；读 HEAD 来确认。
 	head, err := readGitHead(gitDir)
 	if err != nil || head == nil || head.branch == "" {
 		t.Fatalf("expected branch HEAD, got %+v err=%v", head, err)

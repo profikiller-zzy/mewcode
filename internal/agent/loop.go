@@ -26,7 +26,7 @@ const (
 	QueueDone    QueueStatus = "done"
 )
 
-// QueueStatusEvent makes busy-session behavior observable to every frontend.
+// QueueStatusEvent 让繁忙会话的行为对每个前端都可见。
 type QueueStatusEvent struct {
 	SessionID string
 	RunID     string
@@ -54,9 +54,9 @@ type Submission struct {
 type SessionOptions struct {
 	Agent        *Agent
 	Conversation *conversation.Manager
-	// BeforeRun executes on the session worker immediately before snapshotting
-	// the conversation. It is the correct boundary for session-scoped memory
-	// recall or one-time provider instructions.
+	// BeforeRun 在会话 worker 上执行，位置是给对话做快照之前。
+	// 要做会话级的记忆召回，或者只想给 provider 下一次指令，
+	// 放在这里正合适。
 	BeforeRun  func(context.Context, string, string, *Agent, *conversation.Manager)
 	AfterRun   func(RunResult, *conversation.Manager)
 	QueueStore QueueStore
@@ -84,8 +84,8 @@ type loopSession struct {
 	running      bool
 }
 
-// AgentLoop is the session scheduling layer. Each registered session has one
-// worker (strict FIFO); separate session workers execute concurrently.
+// AgentLoop 是会话调度层。每个已注册的会话各有一个 worker（严格 FIFO）；
+// 不同会话的 worker 之间并发执行。
 type AgentLoop struct {
 	mu       sync.Mutex
 	sessions map[string]*loopSession
@@ -160,8 +160,8 @@ func (l *AgentLoop) RegisterSession(sessionID string, options SessionOptions) er
 	return nil
 }
 
-// ReplaceSession is used by resume/clear after the caller has ensured the old
-// session has no active run. It leaves other sessions untouched.
+// ReplaceSession 供 resume/clear 使用，调用方需先确认旧会话没有正在跑的 run。
+// 它不会影响其他会话。
 func (l *AgentLoop) ReplaceSession(sessionID string, options SessionOptions) error {
 	_ = l.UnregisterSession(sessionID)
 	return l.RegisterSession(sessionID, options)
@@ -344,8 +344,8 @@ func (l *AgentLoop) runSession(state *loopSession) {
 	}
 }
 
-// newAgentEventPipe decouples run execution from frontend consumption while
-// retaining every ordered stream event. A slow subscriber cannot stall a run.
+// newAgentEventPipe 把 run 的执行与前端消费解耦，同时保住每一个有序的流事件。
+// 消费慢的订阅者不会拖住一次 run。
 func newAgentEventPipe() (chan AgentEvent, <-chan AgentEvent) {
 	in := make(chan AgentEvent)
 	out := make(chan AgentEvent)
@@ -385,8 +385,8 @@ type QueueStore interface {
 	LoadQueue(sessionID string) ([]QueuedPrompt, error)
 }
 
-// JSONQueueStore makes prompts that arrived while a run was active recoverable
-// after process restart. Files are user-only because prompts may be sensitive.
+// JSONQueueStore 让 run 进行期间到达的 prompt 在进程重启后仍可恢复。
+// 文件权限设为仅用户可读写，因为 prompt 可能包含敏感内容。
 type JSONQueueStore struct{ Root string }
 
 func NewJSONQueueStore(workDir string) *JSONQueueStore {

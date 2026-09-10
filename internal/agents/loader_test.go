@@ -65,10 +65,10 @@ Body text.`
 }
 
 func TestParseAgentFileThirdPartyModelAllowed(t *testing.T) {
-	// Matches AgentJsonSchema — model is "any non-empty string"; availability
-	// is the ModelResolver's call, not the parser's. Used to be a hard
-	// whitelist that silently broke definitions targeting GLM / OpenAI /
-	// custom router names.
+	// 与 AgentJsonSchema 一致 —— model 就是「任意非空字符串」；可不可用
+	// 由 ModelResolver 决定，不归 parser 管。以前这里是一份硬编码白名单，
+	// 会把指向 GLM / OpenAI /
+	// 自定义 router 名字的定义悄悄弄坏。
 	dir := t.TempDir()
 	path := filepath.Join(dir, "glm.md")
 	content := `---
@@ -134,9 +134,9 @@ func TestLoaderBuiltinsAvailable(t *testing.T) {
 }
 
 func TestLoaderRecordsFailedFilesAndWarns(t *testing.T) {
-	// loadDir used to silently swallow parse errors, hiding the cause when a
-	// user-edited definition broke. Failed files must now show up in
-	// FailedFiles and on ErrorWriter.
+	// loadDir 以前会静默吞掉解析错误，用户改坏了定义时看不到原因。
+	// 现在失败的文件必须出现在
+	// FailedFiles 和 ErrorWriter 里。
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, ".mewcode", "agents")
 	os.MkdirAll(agentsDir, 0o755)
@@ -173,8 +173,8 @@ body`
 }
 
 func TestParseAgentDefinitionExtendedFields(t *testing.T) {
-	// All extended frontmatter fields must round-trip from YAML through ParseAgentFile into
-	// AgentDefinition.
+	// 所有扩展 frontmatter 字段都必须能从 YAML 经 ParseAgentFile
+	// 原样往返进 AgentDefinition。
 	dir := t.TempDir()
 	path := filepath.Join(dir, "verify.md")
 	content := `---
@@ -224,9 +224,9 @@ body`
 		t.Errorf("RequiredMcpServers = %v", def.RequiredMcpServers)
 	}
 
-	// ToSpec must forward the extended fields so runSync / runAsync see them.
+	// ToSpec 必须把这些扩展字段透传下去，让 runSync 能看到（background 已废弃，不再透传）。
 	spec := def.ToSpec()
-	if spec.PermissionMode != "acceptEdits" || !spec.Background || spec.Isolation != IsolationWorktree {
+	if spec.PermissionMode != "acceptEdits" || spec.Isolation != IsolationWorktree {
 		t.Errorf("ToSpec did not forward extended fields: %+v", spec)
 	}
 	if spec.InitialPrompt != "kick off with this" {

@@ -13,38 +13,38 @@ import (
 	"mewcode/internal/planfile"
 )
 
-// LeadName is the conventional sender/recipient identifier used by the coordinator side. Teammates
-// send idle notifications here and read the lead's task assignments from messages with From ==
-// LeadName.
+// LeadName 是协调方一侧惯用的收发标识。teammate 把空闲通知发到这里，
+// 并从 From == LeadName
+// 的消息里读取 Lead 分派的任务。
 const LeadName = "lead"
 
-// ShutdownPrefix marks a mailbox message as a request to terminate the teammate. The lead writes
-// one of these to wind down a member cleanly; the runner sees it during idle polling and returns
-// from the loop.
+// ShutdownPrefix 把一条邮箱消息标记为「终止该 teammate」的请求。Lead 写入
+// 这样一条消息，用来干净地收掉一个成员；runner 在空闲轮询时发现它，
+// 就从循环里返回。
 const ShutdownPrefix = "[shutdown]"
 
-// IdlePollInterval is how often an idle teammate scans its inbox for new work.
+// IdlePollInterval 是空闲 teammate 扫描收件箱、找新活的频率。
 const IdlePollInterval = 500 * time.Millisecond
 
-// IsShutdownRequest reports whether a mailbox message asks the teammate to exit by matching the
-// shutdown prefix.
+// IsShutdownRequest 通过匹配 shutdown 前缀，判断一条邮箱消息
+// 是不是在要求该 teammate 退出。
 
-// CreateIdleNotification builds the message a teammate sends to the lead after finishing a turn.
-// The lead routes work by reading these.
+// CreateIdleNotification 构造 teammate 跑完一轮之后发给 Lead 的消息。
+// Lead 靠读这些消息来分派工作。
 func CreateIdleNotification(memberName, reason string) FileMailMessage {
 	return NewFileMailMessage(memberName, fmt.Sprintf("[idle] %s (reason: %s)", memberName, reason))
 }
 
-// RunInProcessTeammate drives a teammate's main loop in the current process. It blocks until ctx is
-// cancelled or a shutdown request lands in the inbox. Each iteration:
+// RunInProcessTeammate 在当前进程里驱动一个 teammate 的主循环。它一直阻塞，
+// 直到 ctx 被取消，或者收件箱里来了 shutdown 请求。每轮迭代：
 //
-// 1. waitForNextPromptOrShutdown — fold any pending mailbox messages into a user prompt (or return
-// on shutdown / cancellation). 2. runAgent — call agent.Run on the shared conversation; forward
-// events through eventOut. The channel closing signals turn-end. 3. sendIdleNotification — drop an
-// idle marker into the lead's inbox so it can dispatch the next task.
+// 1. waitForNextPromptOrShutdown —— 把待处理的邮箱消息折叠成一条 user prompt
+// （遇到 shutdown / 取消就直接返回）。2. runAgent —— 在共享对话上调用 agent.Run，
+// 并通过 eventOut 转发事件，channel 关闭即表示本轮结束。3. sendIdleNotification
+// —— 往 Lead 的收件箱里丢一个空闲标记，好让 Lead 派发下一个任务。
 //
-// This The initial prompt jump-starts the first iteration; subsequent iterations get their prompt
-// from the mailbox.
+// 这条初始 prompt 用来启动第一轮迭代；之后每轮的 prompt
+// 都从收件箱里取。
 func RunInProcessTeammate(
 	ctx context.Context,
 	team *Team,
@@ -65,8 +65,8 @@ func RunInProcessTeammate(
 			return err
 		}
 
-		// Fold any messages that landed in the inbox before this turn into the conversation as a system
-		// reminder so the model sees them as inbound notifications, not user instructions.
+		// 把本轮开始前落进收件箱的消息折叠成 system-reminder 塞进对话，
+		// 这样模型会把它们当成收到的通知，而不是用户的指令。
 		if reminder := InjectPendingMessages(team, member.Name); reminder != "" {
 			member.Conv.AddSystemReminder(reminder)
 		}
@@ -78,7 +78,7 @@ func RunInProcessTeammate(
 
 		ch := member.AgentRef.Run(ctx, member.Conv)
 		for ev := range ch {
-			// Update progress tracking
+			// 更新进度追踪
 			if member.Progress != nil {
 				switch e := ev.(type) {
 				case agent.ToolUseEvent:
@@ -125,13 +125,13 @@ func RunInProcessTeammate(
 			continue
 		}
 
-		// Notify the lead that this teammate finished its turn so the lead can decide whether to feed it
-		// more work.
+		// 通知 Lead 这个 teammate 跑完了一轮，
+		// 好让 Lead 决定要不要再给它派活。
 		_ = team.MailBox.Send(LeadName, CreateIdleNotification(member.Name, idleReason))
 		idleReason = "available"
 
-		// Idle poll. Sleep IdlePollInterval, then drain the inbox. Stop on shutdown messages; otherwise
-		// build the next prompt and loop back.
+		// 空闲轮询。先睡 IdlePollInterval，再清空收件箱。
+		// 遇到 shutdown 消息就停；否则构造下一条 prompt 继续循环。
 		prompt, shutdown, err := waitForNextPromptOrShutdown(ctx, team, member.Name)
 		if err != nil {
 			return err
@@ -150,9 +150,9 @@ func RunInProcessTeammate(
 	}
 }
 
-// waitForNextPromptOrShutdown blocks until the inbox has at least one message, then turns the
-// unread batch into the next user prompt. If any message is a shutdown request, the function
-// returns shutdown=true without building a prompt.
+// waitForNextPromptOrShutdown 阻塞到收件箱里至少有一条消息，然后把这批未读
+// 消息变成下一条 user prompt。如果其中有 shutdown 请求，就直接返回
+// shutdown=true，不构造 prompt。
 // planModeActive 判断队友是否处在计划模式。只有被 Lead 标了 planModeRequired
 // 的队友才会进这个模式，普通队友直接干活。
 func planModeActive(member *Member) bool {
@@ -244,9 +244,9 @@ func waitForNextPromptOrShutdown(ctx context.Context, team *Team, memberName str
 	}
 }
 
-// DrainLeadMailbox reads every unread notification in every team's lead inbox and returns them as
-// system-reminder strings (one per team). The lead's main loop installs this in
-// Agent.NotificationFn so teammate idle notifications surface to the model at the top of each turn.
+// DrainLeadMailbox 读取每个团队 Lead 收件箱里的全部未读通知，并以
+// system-reminder 字符串的形式返回（每个团队一条）。Lead 的主循环把它装到
+// Agent.NotificationFn 上，这样 teammate 的空闲通知就能在每轮开头浮现给模型。
 func DrainLeadMailbox(mgr *TeamManager) []string {
 	if mgr == nil {
 		return nil
@@ -279,9 +279,9 @@ func DrainLeadMailbox(mgr *TeamManager) []string {
 	return notes
 }
 
-// formatInboundAsPrompt turns an unread batch into a single user prompt. Each message is tagged
-// with its sender so the teammate can route a reply. Matches formatAsTeammateMessage in ,
-// simplified to plain text instead of XML.
+// formatInboundAsPrompt 把一批未读消息合成一条 user prompt。每条消息都带上
+// 发送者，方便 teammate 决定回复给谁。与 formatAsTeammateMessage 对应，
+// 这里简化成了纯文本，不用 XML。
 func formatInboundAsPrompt(msgs []FileMailMessage) string {
 	if len(msgs) == 0 {
 		return ""
@@ -294,6 +294,6 @@ func formatInboundAsPrompt(msgs []FileMailMessage) string {
 	return sb.String()
 }
 
-// _ silences the unused-import warning when conversation is referenced only via Member.Conv
-// methods.
+// 当 conversation 只通过 Member.Conv 的方法被引用到时，
+// 用 _ 消掉 unused-import 警告。
 var _ = conversation.NewManager

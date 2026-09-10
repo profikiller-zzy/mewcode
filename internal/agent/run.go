@@ -12,8 +12,8 @@ import (
 	"mewcode/internal/conversation"
 )
 
-// RunOptions contains only state belonging to one independent user request.
-// Session scheduling and queue state intentionally do not live here.
+// RunOptions 只装同一次独立用户请求相关的状态。
+// session 调度和队列状态是故意不放这里的。
 type RunOptions struct {
 	ID           string
 	SessionID    string
@@ -24,8 +24,8 @@ type RunOptions struct {
 	SessionHooks bool
 }
 
-// AgentRun owns one complete ReAct loop: one prompt, one or more model
-// requests/iterations, zero or more tool batches, and one terminal reason.
+// AgentRun 掌管一整个完整的 ReAct 循环：一条 prompt、一次或多次模型
+// 请求 / 迭代、零个或多个工具批次，以及一个终止原因。
 type AgentRun struct {
 	ID           string
 	SessionID    string
@@ -106,8 +106,8 @@ var sensitiveTraceKeys = []string{
 	"authorization", "cookie", "password", "passwd", "secret", "token", "api_key", "apikey", "private_key",
 }
 
-// traceToolArguments retains replay/debug shape without persisting common
-// credential fields or arbitrarily large argument bodies.
+// traceToolArguments 保留可重放 / 调试的形状，但不持久化常见的凭证字段，
+// 也不持久化任意大的参数体。
 func traceToolArguments(arguments map[string]any) map[string]any {
 	redacted := make(map[string]any, len(arguments))
 	for key, value := range arguments {

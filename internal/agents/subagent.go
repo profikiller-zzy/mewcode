@@ -8,10 +8,6 @@ import (
 	"time"
 
 	"mewcode/internal/agent"
-	"mewcode/internal/conversation"
-	"mewcode/internal/llm"
-	"mewcode/internal/permissions"
-	"mewcode/internal/tools"
 )
 
 type TaskStatus string
@@ -178,9 +174,9 @@ func (tm *TaskManager) CancelTask(id string) bool {
 	return false
 }
 
-// SubAgentSpec captures the runtime-relevant subset of BaseAgentDefinition. It is the bridge
-// between the load layer (AgentDefinition) and the execution layer (runSync / runAsync / runFork).
-// Built-in agents skip file parsing and instantiate this directly via BuiltinSpecs.
+// SubAgentSpec 摘取了 BaseAgentDefinition 中与运行时相关的那部分。它是加载层
+// （AgentDefinition）和执行层（runSync / runFork）之间的桥梁。
+// 内置 agent 跳过文件解析，直接通过 BuiltinSpecs 实例化这个结构。
 type SubAgentSpec struct {
 	Name                 string
 	Description          string
@@ -190,31 +186,27 @@ type SubAgentSpec struct {
 	MaxTurns             int
 	Model                string
 
-	// PermissionMode overrides the parent agent's permission mode while the sub-agent runs. Empty
-	// string means inherit from parent.
+	// PermissionMode 在 sub-agent 运行期间覆盖父 agent 的权限模式。
+	// 空字符串表示继承自父 agent。
 	PermissionMode string
 
-	// Background forces this agent to run as a background task when spawned, regardless of the
-	// run_in_background call-site parameter.
-	Background bool
-
-	// Isolation selects a file-system isolation mode; "worktree" creates a temporary git worktree.
+	// Isolation 选择文件系统隔离模式；"worktree" 会创建一个临时的 git worktree。
 	Isolation IsolationMode
 
-	// InitialPrompt is prepended to the first user turn.
+	// InitialPrompt 会被前置到第一轮 user 对话。
 	InitialPrompt string
 
-	// OmitMewcodeMd drops the MEWCODE.md hierarchy from this agent's userContext.
+	// OmitMewcodeMd 把这个 agent 的 userContext 里的 MEWCODE.md 层级去掉。
 	OmitMewcodeMd bool
 
-	// Skills are skill names to preload when the sub-agent starts.
+	// Skills 是 sub-agent 启动时要预加载的 skill 名。
 	Skills []string
 
-	// Memory enables persistent memory in one of three scopes.
+	// Memory 在三种作用域之一里开启持久化记忆。
 	Memory AgentMemoryScope
 
-	// McpServers / RequiredMcpServers / Hooks / Effort carry frontmatter data forward so future
-	// channels can consume it without another schema migration.
+	// McpServers / RequiredMcpServers / Hooks / Effort 把 frontmatter 数据往后传，
+	// 这样以后新增通道时可以直接消费，不用再做一次 schema 迁移。
 	McpServers         []any
 	RequiredMcpServers []string
 	Hooks              any
@@ -273,71 +265,12 @@ var BuiltinSpecs = map[string]SubAgentSpec{
 		Name:            "explore",
 		Description:     "Fast read-only search agent for locating code",
 		DisallowedTools: []string{"EditFile", "WriteFile"},
-		// MaxTurns omitted → defaults to 200 (same fallback as general-purpose). Previous 30-turn cap was
-		// tripping when the LLM had to issue many ToolSearch/Glob/Grep calls to map an unfamiliar repo,
-		// causing the spawn to fail with "reached maximum iterations" before it could report anything
-		// useful.
+		// 不写 MaxTurns → 默认 200（和 general-purpose 的兜底值一样）。之前的 30 轮
+		// 上限会踩坑：当 LLM 需要发很多次 ToolSearch/Glob/Grep 来摸清一个陌生 repo 时，
+		// spawn 会在还没报出任何有用信息前
+		// 就以 "reached maximum iterations" 失败。
 		Model: "haiku",
 	},
-}
-
-func SpawnSubAgent(
-	ctx context.Context,
-	taskMgr *TaskManager,
-	client llm.Client,
-	registry *tools.Registry,
-	protocol string,
-	spec SubAgentSpec,
-	taskPrompt string,
-	parentChecker *permissions.Checker,
-) string {
-	taskID := taskMgr.CreateTask(spec.Name + ": " + truncate(taskPrompt, 50))
-
-	subCtx, cancel := context.WithCancel(ctx)
-	taskMgr.SetRunning(taskID, cancel)
-
-	subRegistry := FilterToolsForAgent(registry, spec.Tools, spec.DisallowedTools, true)
-
-	subAgent := agent.New(client, subRegistry, protocol)
-	subAgent.Checker = deriveSubAgentChecker(parentChecker, spec.PermissionMode)
-	if spec.MaxTurns > 0 {
-		subAgent.MaxIterations = spec.MaxTurns
-	} else {
-		subAgent.MaxIterations = 200
-	}
-
-	go func() {
-		conv := conversation.NewManager()
-		if spec.SystemPromptOverride != "" {
-			conv.AddSystemReminder(spec.SystemPromptOverride)
-		}
-		// initialPrompt is prepended to the first user turn.
-		if spec.InitialPrompt != "" {
-			conv.AddUserMessage(spec.InitialPrompt)
-		}
-		conv.AddUserMessage(taskPrompt)
-
-		var output string
-		ch := subAgent.Run(subCtx, conv)
-		for ev := range ch {
-			switch e := ev.(type) {
-			case agent.StreamText:
-				output += e.Text
-			case agent.PermissionRequestEvent:
-				// Background sub-agents are headless: auto-deny so executeSingleTool doesn't stall on respCh
-				// forever.
-				e.ResponseCh <- agent.PermDeny
-			case agent.ErrorEvent:
-				taskMgr.SetFailed(taskID, e.Message)
-				return
-			case agent.LoopComplete:
-				// done
-			}
-		}
-		taskMgr.SetCompleted(taskID, output)
-	}()
-
-	return taskID
 }
 
 func truncate(s string, n int) string {

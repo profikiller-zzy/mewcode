@@ -68,7 +68,7 @@ func ModeDecide(mode PermissionMode, category tools.ToolCategory) DecisionEffect
 	return m[category]
 }
 
-// Layer 1: Dangerous command detection
+// 第 1 层：危险命令检测
 
 type dangerousPattern struct {
 	re     *regexp.Regexp
@@ -102,7 +102,7 @@ func DetectDangerous(command string) (bool, string) {
 	return false, ""
 }
 
-// Layer 2: Path sandbox
+// 第 2 层：路径沙箱
 
 type PathSandbox struct {
 	allowedRoots []string
@@ -172,7 +172,7 @@ func (s *PathSandbox) GetAllowedRoots() []string {
 	return s.allowedRoots
 }
 
-// Layer 3: Rule engine
+// 第 3 层：规则引擎
 
 type RuleEffect string
 
@@ -385,7 +385,7 @@ func parseRule(raw string, effect RuleEffect) (Rule, error) {
 	return Rule{ToolName: m[1], Pattern: m[2], Effect: effect}, nil
 }
 
-// Content extraction for rule matching
+// 规则匹配用的内容提取
 
 var contentFields = map[string]string{
 	"Bash": "command", "ReadFile": "file_path", "WriteFile": "file_path",
@@ -431,7 +431,7 @@ func DescribeToolAction(toolName string, args map[string]any) string {
 	return toolName
 }
 
-// Layer 4+5: Permission Checker (orchestrates all layers)
+// 第 4+5 层：权限 Checker（统筹所有层）
 
 type Checker struct {
 	Sandbox      *PathSandbox
@@ -459,17 +459,17 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 	// 复合命令逐条检查子命令时共用同一份快照，不重复读盘
 	snapshot := sync.OnceValue(c.RuleEngine.Snapshot)
 
-	// Layer 0: Plan mode plan-file write exception
+	// 第 0 层：Plan 模式下写计划文件的例外
 	if c.Mode == ModePlan && cat == tools.CategoryWrite && isPlanFile(content, c.PlanFilePath) {
 		return Decision{Effect: Allow, Reason: "Plan mode: plan file write allowed"}
 	}
 
-	// Layer 1: safe read-only commands (auto-allow)
+	// 第 1 层：安全的只读命令（自动放行）
 	if cat == tools.CategoryCommand && tools.IsSafeCommand(content) {
 		return Decision{Effect: Allow, Reason: "Safe read-only command"}
 	}
 
-	// Layer 2: dangerous command (Bash only)
+	// 第 2 层：危险命令（仅 Bash）
 	// 黑名单是硬防线，无论沙箱是否开启都必须先过一遍
 	if cat == tools.CategoryCommand {
 		hit, reason := DetectDangerous(content)
@@ -499,7 +499,7 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 		return Decision{Effect: Allow, Reason: "Sandboxed: auto-allow"}
 	}
 
-	// Layer 3: path sandbox (file tools)
+	// 第 3 层：路径沙箱（文件类工具）
 	if (cat == tools.CategoryRead || cat == tools.CategoryWrite) && content != "" {
 		// 受保护路径优先判定：写入权限配置或 Skill 定义一律拒绝，bypass 模式同样拦截
 		if cat == tools.CategoryWrite {
@@ -517,7 +517,7 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 		}
 	}
 
-	// Layer 4: rule engine
+	// 第 4 层：规则引擎
 	ruleResult := EvaluateRules(snapshot(), tool.Name(), content)
 	if ruleResult != nil {
 		switch *ruleResult {
@@ -530,7 +530,7 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 		}
 	}
 
-	// Layer 4: permission mode
+	// 第 4 层：权限模式
 	effect := ModeDecide(c.Mode, cat)
 	if effect == Allow {
 		return Decision{Effect: Allow, Reason: fmt.Sprintf("Permission mode %s: allow", c.Mode)}
@@ -539,7 +539,7 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 		return Decision{Effect: Deny, Reason: fmt.Sprintf("Permission mode %s: deny", c.Mode)}
 	}
 
-	// Layer 5: ASK → HITL
+	// 第 5 层：ASK → HITL
 	return Decision{Effect: Ask, Reason: "User confirmation required"}
 }
 
@@ -547,21 +547,21 @@ func isPlanFile(targetPath, planPath string) bool {
 	if planPath == "" || targetPath == "" {
 		return false
 	}
-	// Try absolute path comparison
+	// 先按绝对路径比较
 	absTarget, err1 := filepath.Abs(targetPath)
 	absPlan, err2 := filepath.Abs(planPath)
 	if err1 == nil && err2 == nil && absTarget == absPlan {
 		return true
 	}
-	// Check if target ends with the plan file's relative suffix
+	// 再检查目标路径是否以计划文件的相对后缀结尾
 	cleanTarget := filepath.Clean(targetPath)
 	cleanPlan := filepath.Clean(planPath)
 	if cleanTarget == cleanPlan {
 		return true
 	}
-	// Base name match: LLM occasionally shortens file_path to just the base name.
-	// The plan slug is randomly generated (adjective+noun+timestamp), so collision
-	// with an unrelated file under the same name is extremely unlikely.
+	// 按文件名兜底匹配：LLM 偶尔会把 file_path 简写成光秃秃的文件名。
+	// 计划文件的 slug 是随机生成的（形容词+名词+时间戳），
+	// 所以和无关文件撞名的概率极低。
 	if filepath.Base(cleanTarget) == filepath.Base(cleanPlan) {
 		return true
 	}

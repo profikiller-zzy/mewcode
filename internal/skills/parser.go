@@ -9,13 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// parseFrontmatterOnly does phase-1 loading: read just enough of the skill
-// file to extract the SkillMeta, leave PromptBody empty. Cheap enough to run
-// for hundreds of skills at startup.
+// parseFrontmatterOnly 做第一阶段加载：只读 skill 文件里够解析出
+// SkillMeta 的部分，PromptBody 留空。开销足够小，
+// 启动时对上百个 skill 跑一遍也没问题。
 //
-// Accepts both layouts:
-//   - <dir>/skill.yaml (+ optional prompt.md, ignored at phase 1)
-//   - <dir>/SKILL.md with `---` YAML frontmatter
+// 两种目录布局都支持：
+//   - <dir>/skill.yaml（+ 可选的 prompt.md，第一阶段忽略）
+//   - <dir>/SKILL.md，带 `---` YAML frontmatter
 func parseFrontmatterOnly(dir string) (*Skill, error) {
 	yamlPath := filepath.Join(dir, "skill.yaml")
 	if data, err := os.ReadFile(yamlPath); err == nil {
@@ -47,10 +47,10 @@ func parseFrontmatterOnly(dir string) (*Skill, error) {
 	}, nil
 }
 
-// loadSkillBody reads the body for an already-frontmatter-parsed skill.
-// Called by Catalog.GetFull each time the skill is invoked (hot reload).
-// On any read/parse error, leaves the existing PromptBody untouched and
-// returns the error so the caller can fall back to the cached version.
+// loadSkillBody 读取已经解析过 frontmatter 的 skill 的正文。
+// 每次 skill 被调用时由 Catalog.GetFull 调用（热加载）。
+// 出现任何读取/解析错误时，保持已有的 PromptBody 不变并把错误返回，
+// 让调用方可以退回缓存版本。
 func loadSkillBody(skill *Skill) error {
 	yamlPath := filepath.Join(skill.SourceDir, "skill.yaml")
 	if _, err := os.Stat(yamlPath); err == nil {
@@ -75,8 +75,8 @@ func loadSkillBody(skill *Skill) error {
 	return nil
 }
 
-// loadSkillFromBytes parses a skill from in-memory bytes (used for go:embed
-// builtins where there's no on-disk directory to re-read).
+// loadSkillFromBytes 从内存中的字节解析 skill（用于 go:embed 的内置 skill，
+// 它们没有可以重新读取的磁盘目录）。
 func loadSkillFromBytes(name string, mdBytes []byte) (*Skill, error) {
 	meta, body := splitFrontmatter(string(mdBytes))
 	if meta.Name == "" {
@@ -86,14 +86,14 @@ func loadSkillFromBytes(name string, mdBytes []byte) (*Skill, error) {
 	return &Skill{
 		Meta:        meta,
 		PromptBody:  body,
-		SourceDir:   "", // embedded — no source dir
+		SourceDir:   "", // 内嵌 —— 没有源目录
 		IsDirectory: false,
 		BodyLoaded:  true,
 	}, nil
 }
 
-// splitFrontmatter separates the YAML frontmatter from the markdown body.
-// Returns zero-value meta if no `---` frontmatter is present.
+// splitFrontmatter 把 YAML frontmatter 和 markdown 正文分开。
+// 没有 `---` frontmatter 时返回零值 meta。
 func splitFrontmatter(content string) (SkillMeta, string) {
 	var meta SkillMeta
 	body := content
@@ -109,12 +109,12 @@ func splitFrontmatter(content string) (SkillMeta, string) {
 	return meta, body
 }
 
-// applyMetaDefaults fills in name/description fallbacks the way the legacy
-// parseSkillMD did:
-//   - missing name → derive from dir basename (lower + kebab)
-//   - missing description → first non-blank, non-heading body line
-//   - missing Mode → "inline"
-//   - missing ForkContext → "none" (only relevant when Mode == "fork")
+// applyMetaDefaults 按旧版 parseSkillMD 的方式
+// 补齐 name/description 的兜底值：
+//   - 缺 name → 从目录 basename 推导（转小写 + kebab）
+//   - 缺 description → 取正文里第一条非空、非标题的行
+//   - 缺 Mode → "inline"
+//   - 缺 ForkContext → "none"（仅当 Mode == "fork" 时才有意义）
 func applyMetaDefaults(meta *SkillMeta, dirOrName, body string) {
 	if meta.Name == "" {
 		base := filepath.Base(dirOrName)

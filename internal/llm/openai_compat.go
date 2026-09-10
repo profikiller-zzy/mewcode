@@ -93,10 +93,10 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 		stream := c.client.Chat.Completions.NewStreaming(ctx, reqParams)
 		defer stream.Close()
 
-		// Track tool calls being assembled across multiple chunks.
-		// The Chat Completions API sends tool call information incrementally:
-		// the first chunk for a given index carries the ID and function name,
-		// subsequent chunks carry argument fragments.
+		// 跟踪跨多个 chunk 组装出来的 tool call。
+		// Chat Completions API 是增量下发 tool call 信息的：
+		// 某个 index 的第一个 chunk 带 ID 和函数名，
+		// 后续 chunk 带参数片段。
 		type toolCallAccum struct {
 			id       string
 			name     string
@@ -105,8 +105,8 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 		toolCalls := make(map[int64]*toolCallAccum)
 		var reasoningAccum string
 
-		// Read SSE events in a separate goroutine so we can respect ctx cancellation
-		// and detect silent connection drops, same pattern as the openai Responses client.
+		// 在单独的 goroutine 里读 SSE 事件，这样既能响应 ctx 取消
+		// 也能发现静默断连，和 openai Responses client 用的是同一套做法。
 		type sseResult struct {
 			hasNext bool
 		}
@@ -146,11 +146,11 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 
 			chunk := stream.Current()
 
-			// Process choices first. Most providers (OpenAI proper) send choices and
-			// the usage-only chunk separately, but some (iFlytek MaaS) put the final
-			// finish_reason chunk and usage into the same SSE event — so we must run
-			// the choice handler even when usage is present, or tool-call completion
-			// gets skipped and the agent loop thinks the turn ended with no tools.
+			// 先处理 choices。大多数 provider（OpenAI 自家）会把 choices 和
+			// 只含 usage 的 chunk 分开下发，但有些（iFlytek MaaS）把最后的
+			// finish_reason chunk 和 usage 塞进同一个 SSE 事件 —— 所以即使 usage
+			// 已经存在，也必须跑一遍 choice 处理，否则 tool call 的收尾会被跳过，
+			// agent loop 就会以为这一轮没有调用任何工具就结束了。
 			var finishReason string
 			if len(chunk.Choices) > 0 {
 				choice := chunk.Choices[0]
@@ -216,8 +216,8 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 				}
 			}
 
-			// Usage (may be in the same chunk as finish_reason for some providers,
-			// or arrive in a trailing usage-only chunk for others).
+			// Usage（有些 provider 会把它和 finish_reason 放在同一个 chunk 里，
+			// 有些则放在末尾一个只含 usage 的 chunk 里）。
 			if chunk.JSON.Usage.Valid() && chunk.Usage.PromptTokens != 0 {
 				cached := int(chunk.Usage.PromptTokensDetails.CachedTokens)
 				input := int(chunk.Usage.PromptTokens) - cached
@@ -237,8 +237,8 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 					},
 				}
 			} else if finishReason == "stop" || finishReason == "tool_calls" {
-				// Provider closed the turn without sending usage — emit StreamEnd so
-				// the agent loop doesn't hang waiting for one.
+				// provider 没有下发 usage 就结束了这一轮 —— 这里补发 StreamEnd，
+				// 免得 agent loop 一直傻等。
 				stopReason := "end_turn"
 				if finishReason == "tool_calls" {
 					stopReason = "tool_use"
@@ -257,14 +257,14 @@ func (c *openaiCompatClient) Stream(ctx context.Context, conv *conversation.Mana
 	return events, errs
 }
 
-// buildChatCompletionMessages converts conversation history into the Chat Completions
-// message format. The system prompt becomes a system message at the start.
+// buildChatCompletionMessages 把对话历史转换成 Chat Completions 的
+// message 格式。system prompt 会作为开头的一条 system 消息。
 // 对于支持 reasoning_content 的 provider（如 DeepSeek、小米），thinking blocks
 // 会作为 assistant 消息的 reasoning_content 字段回传。
 func buildChatCompletionMessages(systemPrompt string, messages []conversation.Message) []openai.ChatCompletionMessageParamUnion {
 	var result []openai.ChatCompletionMessageParamUnion
 
-	// System prompt as the first message
+	// system prompt 作为第一条消息
 	if systemPrompt != "" {
 		result = append(result, openai.SystemMessage(systemPrompt))
 	}
@@ -307,12 +307,12 @@ func buildChatCompletionMessages(systemPrompt string, messages []conversation.Me
 				result = append(result, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant})
 			}
 		} else if len(m.ToolResults) > 0 {
-			// Tool results become individual tool messages
+			// 工具结果各自变成一条 tool 消息
 			for _, tr := range m.ToolResults {
 				result = append(result, openai.ToolMessage(tr.Content, tr.ToolUseID))
 			}
 		} else {
-			// User messages
+			// 用户消息
 			result = append(result, openai.UserMessage(m.Content))
 		}
 	}

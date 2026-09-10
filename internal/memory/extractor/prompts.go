@@ -47,8 +47,8 @@ func opener(newMessageCount int, existingMemories string) string {
 }
 
 // BuildExtractAutoOnlyPrompt 构建仅自动记忆模式的提取 Prompt（不包含团队记忆）。
-// Four-type taxonomy with dual-path scoping: user/feedback memories live in userMemDir,
-// project/reference memories live in projectMemDir.
+// 四类分类法配合双路径 scoping：user/feedback 记忆放在 userMemDir，
+// project/reference 记忆放在 projectMemDir。
 //
 // userMemDir 可能为空（例如未设置 HOME），此时 Prompt 只路由到项目目录，
 // user/feedback 类型实际上不可用。

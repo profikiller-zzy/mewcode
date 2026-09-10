@@ -33,8 +33,8 @@ type Message struct {
 	ThinkingBlocks []ThinkingBlock
 	ToolUses       []ToolUseBlock
 	ToolResults    []ToolResultBlock
-	// RunID identifies the independent user request that produced this message.
-	// Empty is retained for legacy sessions and session-level reminders.
+	// RunID 标识产生这条消息的那个独立用户请求。
+	// 为了兼容旧 session 和 session 级提醒，空值会保留。
 	RunID string
 }
 
@@ -119,10 +119,10 @@ func (m *Manager) AddSystemReminder(content string) {
 	})
 }
 
-// BeginRun establishes the boundary for an independent user request. Messages
-// appended until EndRun inherit runID. For backward-compatible callers that
-// add the prompt before starting the run, the most recent unassigned user
-// message is claimed by this run.
+// BeginRun 为一个独立的用户请求划定边界。在 EndRun 之前追加的消息
+// 都会继承 runID。对于那些在开始 run 之前就把 prompt 加进来的
+// 向后兼容调用方，最近一条还没归属的
+// user 消息会被这次 run 认领。
 func (m *Manager) BeginRun(runID string) {
 	m.activeRunID = runID
 	for i := len(m.history) - 1; i >= 0; i-- {
@@ -137,15 +137,15 @@ func (m *Manager) BeginRun(runID string) {
 	}
 }
 
-// EndRun clears the append-time run marker without changing recorded messages.
+// EndRun 清掉追加时用的 run 标记，不会改动已经记录的消息。
 func (m *Manager) EndRun() { m.activeRunID = "" }
 
-// ActiveRunID returns the run currently appending to this conversation.
+// ActiveRunID 返回当前正在往这个 conversation 里追加的 run。
 func (m *Manager) ActiveRunID() string { return m.activeRunID }
 
-// Clone creates an isolated snapshot suitable for one AgentRun. Message slices
-// and nested tool payloads are copied so a failed or concurrent run cannot
-// mutate the session's committed transcript.
+// Clone 创建一份适合单次 AgentRun 使用的隔离快照。消息切片和嵌套的
+// tool 载荷都会被拷贝，这样一次失败或并发的 run
+// 就不会改到 session 已提交的对话记录。
 func (m *Manager) Clone() *Manager {
 	clone := &Manager{
 		ltmInjected:    m.ltmInjected,
@@ -158,7 +158,7 @@ func (m *Manager) Clone() *Manager {
 	return clone
 }
 
-// ReplaceWith commits a completed run snapshot back to its owning session.
+// ReplaceWith 把一份已完成的 run 快照提交回它所属的 session。
 func (m *Manager) ReplaceWith(other *Manager) {
 	if other == nil {
 		return
@@ -261,8 +261,8 @@ func (m *Manager) InjectLongTermMemory(instructions, memories, skills string) {
 	m.ltmInjected = true
 }
 
-// AppendMessages copies the given messages onto the end of the history. Used by
-// compaction to replay the recent-tail messages verbatim after the summary.
+// AppendMessages 把给定消息拷到历史末尾。压缩会用它把摘要之后
+// 最近尾部的那些消息原样回放一遍。
 func (m *Manager) AppendMessages(messages []Message) {
 	m.history = append(m.history, messages...)
 }

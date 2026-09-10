@@ -71,7 +71,7 @@ func TestParseSkillURLRejects(t *testing.T) {
 		"ftp://www.skills.sh/a/b/c",
 		"https://example.com/some/path",
 		"https://www.skills.sh/just-one-segment",
-		"https://github.com/owner/repo", // no /tree/<ref>
+		"https://github.com/owner/repo", // 没有 /tree/<ref>
 	}
 	for _, u := range bad {
 		if _, err := ParseSkillURL(u); err == nil {
@@ -95,8 +95,8 @@ func TestValidateSkillName(t *testing.T) {
 	}
 }
 
-// fakeGitHub stubs the Contents API + raw file endpoints so we can drive
-// installWith deterministically. Layout:
+// fakeGitHub 把 Contents API 和 raw 文件端点打桩，好让 installWith
+// 能被确定性地驱动。目录结构：
 //
 //	skills/sample/SKILL.md  -> "---\nname: sample\n..."
 //	skills/sample/references/note.md
@@ -161,7 +161,7 @@ func TestInstallEndToEnd(t *testing.T) {
 
 func TestInstallRejectsTreeWithoutSkillMD(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return a tree containing only an unrelated file.
+		// 返回一棵只包含一个无关文件的树。
 		entries := []contentEntry{
 			{Name: "README.md", Path: "x/y/README.md", Type: "file", Size: 4,
 				Encoding: "base64", Content: base64.StdEncoding.EncodeToString([]byte("hi\n"))},

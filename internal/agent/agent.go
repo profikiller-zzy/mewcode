@@ -36,22 +36,22 @@ type Agent struct {
 	WorkDir       string          // 工作目录
 	MaxIterations int             // 最大迭代次数，0 不限
 	ContextWindow int             // 上下文窗口，默认 200000
-	// MaxOutputTokens is the model's max output budget; used by Layer 2 to
-	// compute the effective window for the compaction threshold. Zero falls
-	// back to the summaryOutputReserve default inside compact.
+	// MaxOutputTokens 是模型的最大输出预算，Layer 2 用它算出压缩阈值所依据的
+	// 有效窗口。取 0 时回落到 compact 内部的
+	// summaryOutputReserve 默认值。
 	MaxOutputTokens int
 	Checker         *permissions.Checker // 权限检查器
 	Hooks           *hooks.Engine
-	// SessionID identifies the on-disk session log this agent appends to. When
-	// set, Layer 2 compaction writes a compact_boundary record into that session
-	// so a later resume can rebuild the compacted state instead of replaying the
-	// full pre-compaction transcript. Empty disables boundary persistence (tests,
-	// one-shot callers).
+	// SessionID 标识本 Agent 追加写入的磁盘会话日志。设置后，Layer 2 压缩会往
+	// 该会话里写一条 compact_boundary 记录，之后恢复会话就能直接
+	// 重建压缩后的状态，而不必重放
+	// 压缩前的完整记录。留空则不持久化边界（测试、
+	// 一次性调用方）。
 	SessionID      string
 	NotificationFn func() []string
-	// ToolNameFilter, when non-nil, drops any tool whose Name returns false from the schemas sent to
-	// the LLM. The filter is consulted at the top of every iteration so callers can flip Coordinator
-	// Mode on or off (e.g., when a team is created/torn down) without restarting the agent.
+	// ToolNameFilter 非 nil 时，Name 判定返回 false 的工具不会出现在发给 LLM 的
+	// schema 里。每轮迭代开头都会重新查一次这个过滤器，所以调用方可以随时开关
+	// Coordinator 模式（比如 Team 创建/解散时），不必重启 Agent。
 	Instructions  string
 	MemoryContent string
 	// SkillSection 是可用 Skill 的清单文本。它跟着项目走，所以不进系统提示词，
@@ -64,29 +64,29 @@ type Agent struct {
 	// 工具执行后从 channel 读取并注入
 	MemoryRecallCh <-chan RecallResult
 	ToolNameFilter func(name string) bool
-	// CoordinatorActiveFn, when non-nil, reports whether Coordinator Mode is currently in effect.
-	// Consulted every iteration alongside ToolNameFilter so the scheduling guidance appears exactly
-	// when the tool set is narrowed, and disappears once the team is torn down.
+	// CoordinatorActiveFn 非 nil 时，用来报告 Coordinator 模式当前是否生效。
+	// 每轮迭代都会和 ToolNameFilter 一起查，这样调度指引恰好在工具集被收窄时出现，
+	// Team 一解散也就随之消失。
 	CoordinatorActiveFn func() bool
-	// OnLoopComplete, when non-nil, is invoked fire-and-forget after the agent reaches LoopComplete
-	// (final assistant message, no tool calls remaining). Used by ch09 background memory extraction.
-	// Replaces the original stopHooks dispatcher; failures are silent and must not block the main
-	// loop. The callback receives the live conversation — do not mutate it from another goroutine.
+	// OnLoopComplete 非 nil 时，在 Agent 到达 LoopComplete（最后一条助手消息、
+	// 且没有待执行的工具调用）后以 fire-and-forget 方式调用。ch09 的后台记忆提取用它。
+	// 它取代了原来的 stopHooks 分发器；失败静默处理，绝不能阻塞主循环。
+	// 回调拿到的是正在使用的 conversation —— 不要在别的 goroutine 里改它。
 	OnLoopComplete  func(conv *conversation.Manager)
 	FileHistory     *filehistory.History
 	compactTracking compact.AutoCompactTrackingState
-	// RecoveryState holds the snapshots needed to rebuild working context
-	// after Layer 2 collapses the conversation into a summary: most-recent
-	// file reads and skill invocations. The struct is concurrency-safe so
-	// the streaming executor can write to it from multiple goroutines.
+	// RecoveryState 保存着重建工作上下文所需的快照，供 Layer 2 把对话
+	// 压成摘要之后使用：最近读过的文件和调用过的 skill。
+	// 这个结构体是并发安全的，
+	// 所以流式执行器可以从多个 goroutine 往里写。
 	RecoveryState *compact.RecoveryState
-	// Trace records complete run-level trajectories. It is optional; AgentLoop
-	// installs a durable recorder by default for interactive sessions.
+	// Trace 记录完整的 run 级轨迹。它是可选的；对于交互式会话，
+	// AgentLoop 默认会装一个持久化 recorder。
 	Trace   *TraceRecorder
 	eventCh chan AgentEvent
-	// activeSkills tracks which Skill SOPs have been activated in this session (name → body).
-	// Used by /skills to show what's active and by RecoveryState to survive compaction.
-	// The body is injected once into the conversation as a message — NOT re-injected every turn.
+	// activeSkills 记录本次会话里已经激活的 Skill SOP（name → body）。
+	// /skills 用它展示当前激活了哪些，RecoveryState 靠它跨压缩存活。
+	// body 只作为一条消息注入对话一次 —— 不会每轮重复注入。
 	activeSkills map[string]string
 	// announcedDeferred 是上一次告诉模型的延迟工具清单，按字典序。跟当前清单一比
 	// 就知道工具池有没有变，没变就不重发那条提醒。
@@ -161,8 +161,8 @@ func (a *Agent) MarkMemoriesSurfaced(paths []string) {
 // 还在不在：compact 把历史压成摘要之后原来那条就没了，得重发一遍。
 const deferredReminderMarker = "The following deferred tools are available via ToolSearch."
 
-// ActivateSkill records a skill activation. The body is kept for /skills listing and compaction
-// recovery, but is NOT re-injected every turn — it lives in the conversation as a regular message.
+// ActivateSkill 记录一次 skill 激活。body 会留着给 /skills 列表和压缩恢复用，
+// 但不会每轮重新注入 —— 它就作为一条普通消息待在对话里。
 func (a *Agent) ActivateSkill(name, body string) {
 	if a.activeSkills == nil {
 		a.activeSkills = make(map[string]string)
@@ -170,14 +170,14 @@ func (a *Agent) ActivateSkill(name, body string) {
 	a.activeSkills[name] = body
 }
 
-// ClearActiveSkills drops every pinned SOP. Called by /clear so a fresh conversation doesn't carry
-// over SOPs from a prior task. Safe to call when no skills were ever activated.
+// ClearActiveSkills 清掉所有固定住的 SOP。/clear 会调它，这样新对话不会把上一个
+// 任务的 SOP 带过来。一次都没激活过 skill 时调用也是安全的。
 func (a *Agent) ClearActiveSkills() {
 	a.activeSkills = nil
 }
 
-// GetActiveSkills returns a copy of the currently-pinned SOPs (name → body). Used by tests and by
-// /skills to surface what's active.
+// GetActiveSkills 返回当前固定住的 SOP 的副本（name → body）。测试和 /skills
+// 都用它来展示当前激活了哪些。
 func (a *Agent) GetActiveSkills() map[string]string {
 	out := make(map[string]string, len(a.activeSkills))
 	for k, v := range a.activeSkills {
@@ -186,16 +186,16 @@ func (a *Agent) GetActiveSkills() map[string]string {
 	return out
 }
 
-// SetToolFilter installs a tool visibility filter for the current conversation. The filter is
-// consulted at the top of every iteration so callers can flip Coordinator mode on or off without
-// restarting the agent. Passing nil clears any previous filter.
+// SetToolFilter 给当前对话装一个工具可见性过滤器。每轮迭代开头都会查一次
+// 这个过滤器，所以调用方可以随时开关 Coordinator 模式，不必重启 Agent。
+// 传 nil 会清掉之前设置的过滤器。
 func (a *Agent) SetToolFilter(allow func(name string) bool) {
 	a.ToolNameFilter = allow
 }
 
-// ToolRegistry returns the live tool registry. Named ToolRegistry (not just Registry, even though
-// that would match the field name) to avoid the method/field collision Go disallows. Matches the
-// skills.SkillHost contract.
+// ToolRegistry 返回正在使用的工具注册中心。之所以叫 ToolRegistry 而不是直接叫
+// Registry（尽管后者和字段名一致），是为了避开 Go 不允许的方法/字段同名冲突。
+// 对应 skills.SkillHost 接口的约定。
 func (a *Agent) ToolRegistry() *tools.Registry {
 	return a.Registry
 }
@@ -213,17 +213,17 @@ func New(client llm.Client, registry *tools.Registry, protocol string) *Agent {
 	}
 }
 
-// SetSessionID wires the on-disk session log id onto the agent so Layer 2
-// compaction can persist a compact_boundary record into the same session the TUI
-// is appending plain messages to. Called from the TUI right after the agent is
-// constructed (and again after a resume switches sessions).
+// SetSessionID 把磁盘会话日志的 id 挂到 Agent 上，这样 Layer 2 压缩才能把
+// compact_boundary 记录写进 TUI 正在追加普通消息的那个会话里。
+// 由 TUI 在 Agent 构造完成后立刻调用
+// （resume 切换会话之后会再调一次）。
 func (a *Agent) SetSessionID(id string) { a.SessionID = id }
 
-// currentToolSchemas builds the schema list the next API call will use,
-// honouring any active ToolNameFilter (e.g. Teams coordinator mode).
-// Shared between the recovery attachment (which lists what's still
-// available after compact) and the actual Stream call so both views
-// stay consistent.
+// currentToolSchemas 构造下一次 API 调用要用的 schema 列表，
+// 并遵守当前生效的 ToolNameFilter（比如 Teams 的 coordinator 模式）。
+// 压缩恢复附件（列出压缩后还剩哪些工具）和真正的 Stream 调用共用它，
+// 这样两边看到的东西
+// 始终一致。
 func (a *Agent) currentToolSchemas() []map[string]any {
 	// GetAllSchemas 这里需要理解为这次调用模型api决定传给模型的工具定义
 	schemas := a.Registry.GetAllSchemas(a.Protocol)
@@ -234,8 +234,8 @@ func (a *Agent) currentToolSchemas() []map[string]any {
 	return filterSchemasByName(schemas, a.ToolNameFilter)
 }
 
-// Run is the compatibility entry point used by existing TUI and sub-agent
-// callers. The ReAct loop itself lives on AgentRun.
+// Run 是给现有 TUI 和 sub-agent 调用方用的兼容入口。
+// ReAct 循环本身在 AgentRun 上。
 func (a *Agent) Run(ctx context.Context, conv *conversation.Manager) <-chan AgentEvent {
 	return a.NewRun(RunOptions{SessionID: a.SessionID, Conversation: conv, SessionHooks: true}).Start(ctx)
 }
@@ -310,10 +310,10 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 				return
 			}
 
-			// Compute the tool schema list once per iteration so the recovery
-			// attachment (when compact fires) and the actual Stream call below
-			// agree on what's wired up. Skill filters can only change between
-			// iterations, never within one.
+			// 每轮迭代只算一次工具 schema 列表，这样压缩恢复附件
+			// （压缩触发时）和下面真正的 Stream 调用对「接了哪些工具」
+			// 看法一致。skill 过滤器只会在两轮之间变，
+			// 不会在一轮之内变。
 			toolSchemas := a.currentToolSchemas()
 			iterationCtx := llm.WithStreamMetadata(ctx, llm.StreamMetadata{
 				SessionID: r.SessionID,
@@ -321,7 +321,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 				Iteration: iteration,
 			})
 
-			// Plan mode: inject structured workflow reminder.
+			// Plan mode：注入结构化的工作流提醒。
 			if a.Checker != nil && a.Checker.Mode == permissions.ModePlan {
 				planPath := planfile.GetOrCreatePlanPath(a.WorkDir)
 				a.Checker.PlanFilePath = planPath
@@ -380,7 +380,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 
 			a.emitHook(hooks.EventPreSend, "", nil)
 
-			// Layer 2: auto-compact
+			// Layer 2: 自动压缩
 			// Layer 1（工具结果预算）在结果入历史时已处理完，历史里的内容就是最终大小，直接用其消息估算 token
 			if msg, err := r.Context.Prepare(iterationCtx, r, iteration, toolSchemas); err != nil {
 				r.record(ctx, TraceEvent{Type: TraceError, Source: TraceSourceContext, Iteration: iteration, Payload: map[string]any{"message": err.Error()}})
@@ -437,7 +437,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 					ch <- ToolUseEvent{ToolID: e.ToolID, ToolName: e.ToolName}
 					r.record(ctx, TraceEvent{Type: TraceToolCallStarted, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, ToolCallID: e.ToolID, ToolName: e.ToolName})
 				case llm.ToolCallDelta:
-					// ignore
+					// 忽略
 				case llm.ToolCallComplete:
 					toolCalls = append(toolCalls, e)
 					ch <- ToolUseEvent{
@@ -464,7 +464,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 			}
 			a.emitHook(hooks.EventPostReceive, text, nil)
 
-			// Handle stream errors.
+			// 处理流式错误。
 			select {
 			case err := <-errs:
 				if err != nil {
@@ -474,7 +474,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 							conv.ClearUsageAnchor()
 							conv.InjectLongTermMemory(a.Instructions, a.MemoryContent, a.SkillSection)
 						}
-						continue // retry the turn
+						continue // 重试本轮
 					}
 					if ctx.Err() != nil {
 						finishReason = RunCancelled
@@ -499,10 +499,10 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 				)
 			}
 
-			// Handle max_tokens stop reason.
+			// 处理 max_tokens 结束原因。
 			if stopReason == "max_tokens" {
 				if !maxTokensEscalated {
-					// First hit: escalate silently.
+					// 第一次命中：静默上调。
 					if setter, ok := a.Client.(llm.MaxTokensSetter); ok {
 						setter.SetMaxOutputTokens(maxTokensCeiling)
 						maxTokensEscalated = true
@@ -517,7 +517,7 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 					r.record(ctx, TraceEvent{Type: TraceRetry, Source: TraceSourceRun, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"reason": "max_tokens escalation"}})
 					continue
 				} else if outputRecoveries < maxOutputTokensRecoveries {
-					// Multi-turn recovery.
+					// 多轮恢复。
 					outputRecoveries++
 					conv.AddAssistantFull(text, thinkingBlocks, nil)
 					a.persistLastMessage(conv, r.SessionID)
@@ -527,9 +527,9 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 					r.record(ctx, TraceEvent{Type: TraceRetry, Source: TraceSourceRun, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"reason": "max_tokens recovery", "attempt": outputRecoveries}})
 					continue
 				}
-				// Exhausted: fall through to normal completion.
+				// 次数用尽：落回正常结束流程。
 			} else {
-				// Reset recovery counter on successful turn.
+				// 本轮成功，重置恢复计数器。
 				outputRecoveries = 0
 			}
 
@@ -562,9 +562,9 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 			}
 			conv.AddAssistantFull(text, thinkingBlocks, toolUses)
 			a.persistLastMessage(conv, r.SessionID)
-			// Anchor real usage to the conversation now that the assistant message
-			// is in place; subsequent tool results + next user message are
-			// estimated incrementally on top of this baseline.
+			// 助手消息已经就位，把真实用量锚定到对话上；
+			// 之后的工具结果和下一条用户消息
+			// 都在这个基线上增量估算。
 			anchorAfterAssistant()
 
 			// 按安全性分批执行：只读工具并发，写/命令工具串行
@@ -648,8 +648,8 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 	return ch
 }
 
-// emitHook fires a hook event when an Engine is configured. Failures are non-fatal and surface via
-// the hook notification queue (drained into the next turn's system reminders).
+// emitHook 在配置了 Engine 时触发 hook 事件。失败不致命，会通过 hook 通知队列
+// 暴露出来（该队列会被排进下一轮的 system-reminder）。
 func (a *Agent) emitHook(event hooks.EventName, message string, args map[string]any) {
 	if a.Hooks == nil {
 		return
@@ -661,9 +661,9 @@ func (a *Agent) emitHook(event hooks.EventName, message string, args map[string]
 	})
 }
 
-// filterSchemasByName keeps only the tool schemas whose "name" passes the allow predicate. Used by
-// Coordinator Mode to restrict a Lead agent to coordination-only tools while teammates do the
-// actual work.
+// filterSchemasByName 只保留 "name" 能通过 allow 断言的工具 schema。
+// Coordinator 模式用它把 Lead agent 限制在「只做协调」的工具上，
+// 实际干活交给 teammate。
 func filterSchemasByName(schemas []map[string]any, allow func(name string) bool) []map[string]any {
 	out := make([]map[string]any, 0, len(schemas))
 	for _, s := range schemas {
@@ -675,10 +675,10 @@ func filterSchemasByName(schemas []map[string]any, allow func(name string) bool)
 	return out
 }
 
-// handleStreamError returns (retry, compacted): retry signals the caller to
-// re-run the turn; compacted signals that a ForceCompact rewrote the
-// conversation, so the caller must drop its usage anchor (its AnchorCount no
-// longer maps to the new transcript).
+// handleStreamError 返回 (retry, compacted)：retry 表示让调用方重跑本轮；
+// compacted 表示 ForceCompact 重写了对话，
+// 调用方必须丢掉自己的用量锚点（它的 AnchorCount 已经
+// 对不上新的记录了）。
 func (a *Agent) handleStreamError(ctx context.Context, ch chan AgentEvent, conv *conversation.Manager, err error) (retry, compacted bool) {
 	var ctxErr *llm.ContextTooLongError
 	if errors.As(err, &ctxErr) {
@@ -687,7 +687,7 @@ func (a *Agent) handleStreamError(ctx context.Context, ch chan AgentEvent, conv 
 		msg, compactErr := compact.ForceCompact(ctx, conv, a.Client, a.WorkDir, a.SessionID, a.ContextWindow, a.RecoveryState, a.currentToolSchemas())
 		if compactErr == nil && msg != "" {
 			ch <- CompactEvent{Message: "Auto-compacted due to context length: " + msg}
-			return true, true // retry, and the anchor is now stale
+			return true, true // 重试，此时锚点已过期
 		}
 		return false, false
 	}
@@ -698,7 +698,7 @@ func (a *Agent) handleStreamError(ctx context.Context, ch chan AgentEvent, conv 
 		ch <- RetryEvent{Reason: "rate limited", Wait: wait}
 		select {
 		case <-time.After(wait):
-			return true, false // retry without compaction
+			return true, false // 重试，不做压缩
 		case <-ctx.Done():
 			return false, false
 		}
@@ -728,8 +728,8 @@ type toolExecResult struct {
 	contentBlocks []map[string]any
 }
 
-// extractFilePath pulls a representative path from common tool argument keys so hooks can do path-
-// glob matching (`file_path =* "**/*.go"`).
+// extractFilePath 从常见的工具参数 key 里取出一个有代表性的路径，好让 hook
+// 做路径 glob 匹配（`file_path =* "**/*.go"`）。
 func extractFilePath(args map[string]any) string {
 	for _, key := range []string{"file_path", "path", "pattern", "target"} {
 		if v, ok := args[key].(string); ok && v != "" {

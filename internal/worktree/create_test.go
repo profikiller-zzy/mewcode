@@ -34,7 +34,7 @@ func TestGetOrCreateWorktree_RoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First call: creates a new worktree.
+	// 第一次调用：新建一个 worktree。
 	r1, err := getOrCreateWorktree(ctx, repo, "feature-x")
 	if err != nil {
 		t.Fatalf("first getOrCreateWorktree: %v", err)
@@ -55,7 +55,7 @@ func TestGetOrCreateWorktree_RoundTrip(t *testing.T) {
 		t.Errorf(".git pointer not present in worktree: %v", err)
 	}
 
-	// Second call same slug: fast-resume returns Existed=true.
+	// 第二次调用同样的 slug：快速恢复，返回 Existed=true。
 	r2, err := getOrCreateWorktree(ctx, repo, "feature-x")
 	if err != nil {
 		t.Fatalf("second getOrCreateWorktree: %v", err)
@@ -67,8 +67,8 @@ func TestGetOrCreateWorktree_RoundTrip(t *testing.T) {
 		t.Errorf("resume HeadCommit = %q, want same as create (%q)", r2.HeadCommit, r1.HeadCommit)
 	}
 
-	// Remove the worktree dir manually; next call should go through full
-	// creation path again (and -B should reset the orphan branch).
+	// 手动删掉 worktree 目录；下一次调用应该重新走完整的
+	// 创建流程（并且 -B 会重置那个孤立的分支）。
 	if out, err := exec.Command("git", "-C", repo, "worktree", "remove", "--force", r1.WorktreePath).CombinedOutput(); err != nil {
 		t.Fatalf("cleanup git worktree remove: %v\n%s", err, out)
 	}

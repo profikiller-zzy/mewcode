@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// ToolActivity describes a single tool invocation.
+// ToolActivity 描述一次工具调用。
 type ToolActivity struct {
 	ToolName    string
 	Description string
 }
 
-// NewToolActivity creates a ToolActivity with an auto-generated description.
+// NewToolActivity 创建一个带自动生成描述的 ToolActivity。
 func NewToolActivity(toolName string, input map[string]interface{}) ToolActivity {
 	return ToolActivity{
 		ToolName:    toolName,
@@ -50,19 +50,19 @@ func describeActivity(toolName string, input map[string]interface{}) string {
 	}
 }
 
-// TeammateProgress tracks real-time progress for one teammate.
-// All methods are goroutine-safe.
+// TeammateProgress 跟踪单个 teammate 的实时进度。
+// 所有方法都是 goroutine 安全的。
 type TeammateProgress struct {
 	mu               sync.Mutex
 	Name             string
 	TeamName         string
-	Status           string // "running", "idle", "completed", "failed", "stopped"
+	Status           string // 取值："running", "idle", "completed", "failed", "stopped"
 	ToolUseCount     int
 	TokenCount       int64
 	LastActivity     *ToolActivity
-	RecentActivities []ToolActivity // max 5
+	RecentActivities []ToolActivity // 最多 5 条
 	SpinnerVerb      string
-	StartTime        int64 // unix ms
+	StartTime        int64 // unix 毫秒
 	LastMessage      string
 }
 
@@ -143,7 +143,7 @@ func (p *TeammateProgress) GetTokenCount() int64 {
 	return p.TokenCount
 }
 
-// FormatTokens formats a token count for display.
+// FormatTokens 把 token 数格式化成用于展示的字符串。
 func FormatTokens(n int64) string {
 	if n >= 1_000_000 {
 		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)

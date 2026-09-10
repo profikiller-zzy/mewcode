@@ -8,7 +8,7 @@ import (
 	"mewcode/internal/tools"
 )
 
-// TaskCreateTool creates a new task in the todo list.
+// TaskCreateTool 在 todo 列表里创建一条新任务。
 type TaskCreateTool struct {
 	List *TaskList
 }
@@ -62,7 +62,7 @@ func (t *TaskCreateTool) Execute(_ context.Context, args map[string]any) tools.T
 	return tools.ToolResult{Output: fmt.Sprintf("Task #%s created successfully: %s", task.ID, task.Subject)}
 }
 
-// TaskGetTool retrieves a task by ID.
+// TaskGetTool 按 ID 获取一条任务。
 type TaskGetTool struct {
 	List *TaskList
 }
@@ -119,7 +119,7 @@ func (t *TaskGetTool) Execute(_ context.Context, args map[string]any) tools.Tool
 	return tools.ToolResult{Output: sb.String()}
 }
 
-// TaskListTool lists all tasks.
+// TaskListTool 列出所有任务。
 type TaskListTool struct {
 	List *TaskList
 }
@@ -178,7 +178,7 @@ func (t *TaskListTool) Execute(_ context.Context, _ map[string]any) tools.ToolRe
 	return tools.ToolResult{Output: sb.String()}
 }
 
-// TaskUpdateTool updates an existing task.
+// TaskUpdateTool 更新一条已有的任务。
 type TaskUpdateTool struct {
 	List *TaskList
 }

@@ -81,7 +81,7 @@ func TestMCPToolsPassThrough(t *testing.T) {
 }
 
 func TestGlobalDisallowedExpanded(t *testing.T) {
-	// Each of these must be blocked for every sub-agent regardless of definition allowlist.
+	// 这些工具对任何 sub-agent 都必须被拦掉，不管定义里的 allowlist 写了什么。
 	reg := makeRegistry(
 		"ReadFile",
 		"TaskOutput",
@@ -106,7 +106,7 @@ func TestGlobalDisallowedExpanded(t *testing.T) {
 }
 
 func TestAsyncWhitelistExpanded(t *testing.T) {
-	// Async agents may only use this whitelisted set of tools.
+	// 异步 agent 只能用这个白名单里的工具。
 	reg := makeRegistry(
 		"ReadFile", "WebSearch", "TodoWrite", "Grep", "WebFetch", "Glob",
 		"Bash", "EditFile", "WriteFile", "NotebookEdit", "Skill",
@@ -125,8 +125,8 @@ func TestAsyncWhitelistExpanded(t *testing.T) {
 }
 
 func TestInProcessTeammateExtraTools(t *testing.T) {
-	// Coordination tools that are normally blocked by the async whitelist must be allowed when the
-	// sub-agent is an in-process teammate.
+	// 正常情况下被异步白名单拦掉的协调类工具，在这个 sub-agent 是
+	// 进程内 teammate 时必须放行。
 	reg := makeRegistry("ReadFile", "TaskCreate", "TaskList", "SendMessage", "Agent")
 	asTeammate := FilterToolsForAgentEx(reg, nil, nil, true, false, true)
 	for _, name := range []string{"TaskCreate", "TaskList", "SendMessage"} {
@@ -134,9 +134,9 @@ func TestInProcessTeammateExtraTools(t *testing.T) {
 			t.Errorf("%s should be allowed for in-process teammates", name)
 		}
 	}
-	// Agent tool is allowed for in-process teammates (to spawn sync subagents)
-	// but the global ALL_AGENT_DISALLOWED_TOOLS gate runs before the teammate
-	// check, so it still gets blocked. Document the current behavior.
+	// Agent 工具对进程内 teammate 是放行的（用来派生同步 subagent），
+	// 但全局的 ALL_AGENT_DISALLOWED_TOOLS 闸门在 teammate 检查之前
+	// 就先执行了，所以它还是会被拦掉。这里记录当前的行为。
 	notTeammate := FilterToolsForAgentEx(reg, nil, nil, true, false, false)
 	for _, name := range []string{"TaskCreate", "TaskList", "SendMessage"} {
 		if hasToolNamed(notTeammate, name) {

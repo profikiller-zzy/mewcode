@@ -3,7 +3,7 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Brand colors
+	// 品牌色
 	brandPurple = lipgloss.Color("99")
 	dimText     = lipgloss.Color("242")
 	mutedText   = lipgloss.Color("245")
@@ -14,7 +14,7 @@ var (
 	yellowText  = lipgloss.Color("214")
 	cyanText    = lipgloss.Color("80")
 
-	// Banner
+	// 横幅
 	bannerStyle = lipgloss.NewStyle().
 			Foreground(brandPurple).
 			Bold(true)
@@ -22,31 +22,31 @@ var (
 	bannerDimStyle = lipgloss.NewStyle().
 			Foreground(dimText)
 
-	// Separator line
+	// 分隔线
 	separatorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("236"))
 
-	// User prompt marker
+	// 用户输入标记
 	promptStyle = lipgloss.NewStyle().
 			Foreground(cyanText).
 			Bold(true)
 
-	// AI response marker
+	// AI 回复标记
 	aiMarkerStyle = lipgloss.NewStyle().
 			Foreground(brandPurple).
 			Bold(true)
 
-	// AI text
+	// AI 文本
 	aiTextStyle = lipgloss.NewStyle().
 			Foreground(normalText).
 			PaddingLeft(2)
 
-	// Streaming text (slightly dimmer while streaming)
+	// 流式文本（流式输出时稍暗）
 	streamingTextStyle = lipgloss.NewStyle().
 				Foreground(normalText).
 				PaddingLeft(2)
 
-	// Tool call styles
+	// 工具调用样式
 
 	toolRunningStyle = lipgloss.NewStyle().
 				Foreground(dimText).
@@ -73,12 +73,12 @@ var (
 				Foreground(redText).
 				PaddingLeft(4)
 
-	// Error message
+	// 错误信息
 	errorStyle = lipgloss.NewStyle().
 			Foreground(redText).
 			PaddingLeft(2)
 
-	// Permission dialog
+	// 权限弹窗
 	permBorderStyle = lipgloss.NewStyle().
 			Foreground(yellowText).
 			Bold(true)
@@ -86,14 +86,14 @@ var (
 	permDimStyle = lipgloss.NewStyle().
 			Foreground(dimText)
 
-	// Status bar (bottom)
+	// 状态栏（底部）
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(dimText)
 
 	statusItemStyle = lipgloss.NewStyle().
 			Foreground(mutedText)
 
-	// Provider selection
+	// Provider 选择
 	selectLabelStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(brandPurple).

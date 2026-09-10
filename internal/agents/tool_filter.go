@@ -20,8 +20,8 @@ var AllAgentDisallowedTools = map[string]bool{
 	"Workflow":        true,
 }
 
-// CustomAgentDisallowedTools , which is just a clone of ALL_AGENT_DISALLOWED_TOOLS. Kept as a
-// separate map so future extra restrictions can be added without touching the global list.
+// CustomAgentDisallowedTools 只是 ALL_AGENT_DISALLOWED_TOOLS 的一份拷贝。
+// 单独留成一个 map，是为了将来加额外限制时不用动全局那份列表。
 var CustomAgentDisallowedTools = map[string]bool{
 	"TaskOutput":      true,
 	"ExitPlanMode":    true,
@@ -32,9 +32,9 @@ var CustomAgentDisallowedTools = map[string]bool{
 	"Workflow":        true,
 }
 
-// AsyncAgentAllowedTools Async (background) agents can only use these tools — no Agent (no nested
-// spawn), no TaskOutput, no ExitPlanMode, no TaskStop. Local tool naming maps FILE_READ → ReadFile,
-// FILE_EDIT → EditFile, FILE_WRITE → WriteFile.
+// AsyncAgentAllowedTools 异步（后台）agent 只能用这些工具 —— 没有 Agent（不能嵌套派发）、
+// 没有 TaskOutput、没有 ExitPlanMode、没有 TaskStop。本地工具命名映射为
+// FILE_READ → ReadFile、FILE_EDIT → EditFile、FILE_WRITE → WriteFile。
 var AsyncAgentAllowedTools = map[string]bool{
 	"ReadFile":        true,
 	"WebSearch":       true,
@@ -57,9 +57,9 @@ var AsyncAgentAllowedTools = map[string]bool{
 	"ExitWorktree":    true,
 }
 
-// InProcessTeammateAllowedTools When a sub-agent is spawned as an in-process teammate (ch15 Agent
-// Teams), it gets the async whitelist plus these coordination tools so it can manage the shared
-// task list and send messages to peers.
+// InProcessTeammateAllowedTools 当 sub-agent 以进程内 teammate 的形式被拉起时
+// （ch15 Agent Teams），它在异步白名单之外还能拿到这些协作工具，
+// 用来管理共享任务列表，以及给同伴发消息。
 var InProcessTeammateAllowedTools = map[string]bool{
 	"TaskCreate":  true,
 	"TaskGet":     true,
@@ -85,15 +85,15 @@ func FilterToolsForAgent(reg *tools.Registry, allowedTools, disallowedTools []st
 
 // FilterToolsForAgentEx
 //
-// Layers applied in order: 1. MCP tools (mcp__*) — always allowed 2. ALL_AGENT_DISALLOWED_TOOLS —
-// global block (recursion / main-thread only) 3. CUSTOM_AGENT_DISALLOWED_TOOLS — custom (non-built-
-// in) agents only 4. ASYNC_AGENT_ALLOWED_TOOLS — background agents are whitelisted; if the agent is
-// an in-process teammate, also allow IN_PROCESS_TEAMMATE_ALLOWED_TOOLS 5. Agent definition
-// disallowedTools — definition-level blacklist 6. Agent definition tools — definition-level
-// whitelist intersection ("*" disables this).
+// 依次应用以下几层：1. MCP 工具（mcp__*）—— 一律放行 2. ALL_AGENT_DISALLOWED_TOOLS ——
+// 全局封禁（递归 / 仅主线程）3. CUSTOM_AGENT_DISALLOWED_TOOLS —— 只针对自定义
+// （非内置）agent 4. ASYNC_AGENT_ALLOWED_TOOLS —— 后台 agent 走白名单；
+// 如果该 agent 是进程内 teammate，再额外放行 IN_PROCESS_TEAMMATE_ALLOWED_TOOLS
+// 5. Agent 定义的 disallowedTools —— 定义级黑名单 6. Agent 定义的 tools
+// —— 定义级白名单求交（"*" 表示跳过这一层）
 //
-// isCustom: agent loaded from .mewcode/agents/, not a built-in. isInProcessTeammate: spawned via
-// TeamCreate / SpawnTeammate in ch15.
+// isCustom：agent 来自 .mewcode/agents/，不是内置的。
+// isInProcessTeammate：通过 ch15 里的 TeamCreate / SpawnTeammate 拉起的。
 func FilterToolsForAgentEx(reg *tools.Registry, allowedTools, disallowedTools []string, isAsync, isCustom, isInProcessTeammate bool) *tools.Registry {
 	disallowed := make(map[string]bool, len(disallowedTools))
 	for _, name := range disallowedTools {
@@ -110,27 +110,27 @@ func FilterToolsForAgentEx(reg *tools.Registry, allowedTools, disallowedTools []
 	for _, t := range reg.ListTools() {
 		name := t.Name()
 
-		// Layer 1: MCP tools always allowed.
+		// 第 1 层：MCP 工具一律放行。
 		if IsMCPTool(name) {
 			filtered.Register(t)
 			continue
 		}
 
-		// Layer 2: global disallowed (applies to every sub-agent).
+		// 第 2 层：全局禁用（对所有 sub-agent 生效）。
 		if AllAgentDisallowedTools[name] {
 			continue
 		}
 
-		// Layer 3: custom agent extra restrictions.
+		// 第 3 层：自定义 agent 的额外限制。
 		if isCustom && CustomAgentDisallowedTools[name] {
 			continue
 		}
 
-		// Layer 4: async agent whitelist (with in-process teammate extension).
+		// 第 4 层：异步 agent 白名单（含进程内 teammate 的扩展）。
 		if isAsync && !AsyncAgentAllowedTools[name] {
 			if isInProcessTeammate {
-				// In-process teammates can also use Agent (sync subagents only, validated at call site) plus
-				// coordination tools.
+				// 进程内 teammate 还能用 Agent（仅限同步 subagent，在调用点校验）
+				// 以及协作类工具。
 				if name == "Agent" || InProcessTeammateAllowedTools[name] {
 					filtered.Register(t)
 					continue
@@ -139,12 +139,12 @@ func FilterToolsForAgentEx(reg *tools.Registry, allowedTools, disallowedTools []
 			continue
 		}
 
-		// Layer 5: definition-level disallowed.
+		// 第 5 层：定义级禁用。
 		if disallowed[name] {
 			continue
 		}
 
-		// Layer 6: definition-level allowed (whitelist intersection).
+		// 第 6 层：定义级放行（白名单求交）。
 		if hasWhitelist && !allowed[name] {
 			continue
 		}

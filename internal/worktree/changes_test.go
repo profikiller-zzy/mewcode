@@ -16,7 +16,7 @@ func TestHasWorktreeChanges_Clean(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	// Get HEAD commit
+	// 取 HEAD commit
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = repo
 	out, err := cmd.Output()
@@ -25,7 +25,7 @@ func TestHasWorktreeChanges_Clean(t *testing.T) {
 	}
 	head := trimNewline(string(out))
 
-	// Clean repo should return false
+	// 干净的仓库应该返回 false
 	if HasWorktreeChanges(context.Background(), repo, head) {
 		t.Fatal("expected no changes in clean repo")
 	}
@@ -44,7 +44,7 @@ func TestHasWorktreeChanges_Dirty(t *testing.T) {
 	out, _ := cmd.Output()
 	head := trimNewline(string(out))
 
-	// Create uncommitted file
+	// 创建一个未提交的文件
 	os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("dirty"), 0o644)
 
 	if !HasWorktreeChanges(context.Background(), repo, head) {
@@ -65,7 +65,7 @@ func TestHasWorktreeChanges_NewCommit(t *testing.T) {
 	out, _ := cmd.Output()
 	head := trimNewline(string(out))
 
-	// Add a new commit
+	// 新增一个提交
 	os.WriteFile(filepath.Join(repo, "new.txt"), []byte("new"), 0o644)
 	exec.Command("git", "-C", repo, "add", ".").Run()
 	exec.Command("git", "-C", repo, "commit", "-m", "new").Run()
@@ -76,7 +76,7 @@ func TestHasWorktreeChanges_NewCommit(t *testing.T) {
 }
 
 func TestHasWorktreeChanges_FailClosed(t *testing.T) {
-	// Non-existent path should return true (fail-closed)
+	// 不存在的路径应该返回 true（fail-closed）
 	if !HasWorktreeChanges(context.Background(), "/nonexistent-path-xyz", "abc123") {
 		t.Fatal("expected true for non-existent path (fail-closed)")
 	}
@@ -112,7 +112,7 @@ func TestCountWorktreeChanges_EmptyHeadCommit(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	// Empty originalHeadCommit should return nil (fail-closed)
+	// originalHeadCommit 为空时应该返回 nil（fail-closed）
 	summary := CountWorktreeChanges(context.Background(), repo, "")
 	if summary != nil {
 		t.Fatal("expected nil with empty head commit (fail-closed)")

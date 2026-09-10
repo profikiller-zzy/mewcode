@@ -8,7 +8,7 @@ import (
 	"mewcode/internal/tools"
 )
 
-// SendMessageTool allows agents to send messages to named teammates.
+// SendMessageTool 让 Agent 可以给具名的 teammate 发消息。
 type SendMessageTool struct {
 	TeamMgr    *TeamManager
 	SenderName string
@@ -98,9 +98,9 @@ func (t *SendMessageTool) Execute(ctx context.Context, args map[string]any) tool
 		}
 	}
 
-	// The lead is not registered as a Member (it lives in the parent
-	// process and only reads from its own mailbox), so route to it by
-	// finding any team the sender belongs to.
+	// Lead 没有注册成 Member（它活在父进程里，只从自己的信箱读消息），
+	// 所以要发给它，得先找到发送者
+	// 所属的任意一个团队。
 	if to == LeadName {
 		for _, teamName := range t.TeamMgr.ListTeams() {
 			team := t.TeamMgr.GetTeam(teamName)
@@ -126,11 +126,11 @@ func (t *SendMessageTool) Execute(ctx context.Context, args map[string]any) tool
 		recipient = resolved
 	}
 
-	// Find a registered teammate with this name, or fall back to the
-	// file-based mailbox. In tmux/iTerm mode each teammate runs in a
-	// separate process and only knows about itself in Members, so the
-	// in-memory lookup will miss peers. The mailbox write always works
-	// because all processes share the same inbox directory on disk.
+	// 找一个注册过、名字匹配的 teammate，找不到就回退到基于文件的信箱。
+	// 在 tmux/iTerm 模式下每个 teammate 跑在独立进程里，
+	// 在 Members 中只认得自己，所以内存查找会漏掉同伴。
+	// 写文件信箱总是可行的，
+	// 因为所有进程共享磁盘上同一个 inbox 目录。
 	for _, teamName := range t.TeamMgr.ListTeams() {
 		team := t.TeamMgr.GetTeam(teamName)
 		if team == nil {
@@ -142,9 +142,9 @@ func (t *SendMessageTool) Execute(ctx context.Context, args map[string]any) tool
 				Output: fmt.Sprintf("Message sent to %s.", to),
 			}
 		}
-		// Recipient not in Members but we belong to this team — write
-		// directly to the file mailbox so external-process peers pick
-		// it up on their next poll.
+		// 收件人不在 Members 里，但我们属于这个团队 —— 直接写文件信箱，
+		// 这样外部进程的同伴在下一次轮询时
+		// 就能取到。
 		if _, ok := team.Members[t.SenderName]; ok {
 			team.SendMessage(t.SenderName, recipient, content)
 			return tools.ToolResult{
@@ -159,7 +159,7 @@ func (t *SendMessageTool) Execute(ctx context.Context, args map[string]any) tool
 	}
 }
 
-// TeamCreateTool creates a new agent team.
+// TeamCreateTool 创建一个新的 Agent 团队。
 type TeamCreateTool struct {
 	TeamMgr *TeamManager
 }
@@ -237,7 +237,7 @@ func (t *TeamCreateTool) Execute(ctx context.Context, args map[string]any) tools
 		return tools.ToolResult{Output: "Error: team_name is required", IsError: true}
 	}
 
-	// Deduplicate: if name exists, append suffix
+	// 去重：如果名字已存在，就追加后缀
 	baseName := name
 	for i := 2; t.TeamMgr.GetTeam(name) != nil; i++ {
 		name = fmt.Sprintf("%s-%d", baseName, i)
@@ -252,7 +252,7 @@ func (t *TeamCreateTool) Execute(ctx context.Context, args map[string]any) tools
 	}
 }
 
-// TeamDeleteTool deletes an agent team and stops all members.
+// TeamDeleteTool 删除一个 Agent 团队并停掉所有成员。
 type TeamDeleteTool struct {
 	TeamMgr *TeamManager
 }

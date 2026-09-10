@@ -50,9 +50,9 @@ func (t *GlobTool) Execute(_ context.Context, args map[string]any) ToolResult {
 		return ToolResult{Output: fmt.Sprintf("Error: path not found: %s", basePath), IsError: true}
 	}
 
-	// Recognize doublestar `**/` prefix and treat it as "match basePattern at
-	// any depth". Go's filepath.Match doesn't understand `**`; without this,
-	// the most common LLM-issued patterns like `**/*.go` silently match nothing.
+	// 识别 doublestar 的 `**/` 前缀，把它当成「在任意深度匹配
+	// basePattern」。Go 的 filepath.Match 不认 `**`；不做这层处理的话，
+	// 模型最常用的 `**/*.go` 这类写法会静默匹配不到任何文件。
 	recursive := false
 	basePattern := pattern
 	for strings.HasPrefix(basePattern, "**/") {
@@ -74,7 +74,7 @@ func (t *GlobTool) Execute(_ context.Context, args map[string]any) ToolResult {
 		rel, _ := filepath.Rel(basePath, path)
 		matched := false
 		if recursive {
-			// `**/<basePattern>` — match basePattern against base name at any depth.
+			// `**/<basePattern>` —— 在任意深度用 basePattern 去匹配 base name。
 			matched, _ = filepath.Match(basePattern, filepath.Base(path))
 		} else {
 			matched, _ = filepath.Match(pattern, filepath.Base(path))

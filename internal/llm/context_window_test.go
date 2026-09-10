@@ -10,9 +10,9 @@ import (
 	"mewcode/internal/config"
 )
 
-// TestResolveContextWindow_FetchSuccess covers layer 2 working: a healthy
-// /v1/models/{model} endpoint returns max_input_tokens, which is cached on the
-// provider config and surfaced by GetContextWindow.
+// TestResolveContextWindow_FetchSuccess 覆盖第 2 层正常工作的情况：
+// 健康的 /v1/models/{model} 接口返回 max_input_tokens，它会被缓存到
+// provider 配置上，并由 GetContextWindow 暴露出来。
 func TestResolveContextWindow_FetchSuccess(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +36,9 @@ func TestResolveContextWindow_FetchSuccess(t *testing.T) {
 	}
 }
 
-// TestResolveContextWindow_FetchErrorDegrades covers the critical path: when
-// the endpoint errors (here 500), the fetch must fail silently — no panic, no
-// blocking — and GetContextWindow falls back to the mapping table.
+// TestResolveContextWindow_FetchErrorDegrades 覆盖关键路径：接口报错时
+// （这里返回 500），拉取必须静默失败 —— 不 panic、不阻塞 ——
+// 然后 GetContextWindow 回退到映射表。
 func TestResolveContextWindow_FetchErrorDegrades(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
@@ -49,21 +49,21 @@ func TestResolveContextWindow_FetchErrorDegrades(t *testing.T) {
 	cfg := &config.ProviderConfig{
 		Protocol: "anthropic", BaseURL: srv.URL, APIKey: "k", Model: "claude-sonnet-4-6",
 	}
-	ResolveContextWindow(context.Background(), cfg) // must not panic
+	ResolveContextWindow(context.Background(), cfg) // 不能 panic
 
-	// Mapping table gives 200000 for claude; the failed fetch must not lower it.
+	// 映射表给 claude 的是 200000；拉取失败不能把它拉低。
 	if got := cfg.GetContextWindow(); got != 200000 {
 		t.Fatalf("on fetch error should fall back to mapping table: got %d, want 200000", got)
 	}
 }
 
-// TestResolveContextWindow_UnreachableDegrades simulates a dead endpoint
-// (closed server). The bounded-timeout fetch must degrade to the mapping table
-// without hanging or crashing.
+// TestResolveContextWindow_UnreachableDegrades 模拟一个死掉的接口
+// （服务已关闭）。带超时上限的拉取必须回退到映射表，
+// 既不卡住也不崩。
 func TestResolveContextWindow_UnreachableDegrades(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
-	srv.Close() // close immediately so connections are refused
+	srv.Close() // 立刻关闭，让连接被拒绝
 
 	cfg := &config.ProviderConfig{
 		Protocol: "anthropic", BaseURL: url, APIKey: "k", Model: "gpt-4o",
@@ -75,9 +75,9 @@ func TestResolveContextWindow_UnreachableDegrades(t *testing.T) {
 	}
 }
 
-// TestResolveContextWindow_NonAnthropicSkipped confirms layer 2 only applies to
-// Anthropic-protocol providers: a non-anthropic provider is never fetched and
-// resolves via the mapping table.
+// TestResolveContextWindow_NonAnthropicSkipped 确认第 2 层只对
+// Anthropic 协议的 provider 生效：非 anthropic 的 provider 不会发起拉取，
+// 而是按映射表解析。
 func TestResolveContextWindow_NonAnthropicSkipped(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,8 +99,8 @@ func TestResolveContextWindow_NonAnthropicSkipped(t *testing.T) {
 	}
 }
 
-// TestResolveContextWindow_ConfigOverrideSkipsFetch confirms that an explicit
-// config window short-circuits the fetch entirely (no network call).
+// TestResolveContextWindow_ConfigOverrideSkipsFetch 确认显式配置的窗口
+// 会完全短路掉拉取（一次网络请求都不发）。
 func TestResolveContextWindow_ConfigOverrideSkipsFetch(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,13 +7,14 @@ import (
 
 	"mewcode/internal/conversation"
 	"mewcode/internal/permissions"
+	"mewcode/internal/teams"
 	"mewcode/internal/tools"
 )
 
 func TestBuildForkedConversationPreservesThinkingBlocks(t *testing.T) {
-	// Byte-exact replay: an assistant message with thinking blocks must be reproduced with the same
-	// thinking blocks in the forked conversation, otherwise the API request prefix diverges and the
-	// prompt cache misses.
+	// 逐字节重放：带 thinking blocks 的 assistant 消息，在 fork 出来的对话里
+	// 必须带着同样的 thinking blocks 复现，否则 API 请求的前缀就会分叉，
+	// prompt cache 也会失效。
 	parent := conversation.NewManager()
 	thinking := []conversation.ThinkingBlock{{Thinking: "secret plan", Signature: "sig-1"}}
 	parent.AddAssistantFull("hello", thinking, []conversation.ToolUseBlock{
@@ -38,8 +39,8 @@ func TestBuildForkedConversationPreservesThinkingBlocks(t *testing.T) {
 }
 
 func TestDeriveSubAgentCheckerOverrideMode(t *testing.T) {
-	// spec.PermissionMode must produce a Checker that shares the parent's Sandbox / RuleEngine but
-	// flips the Mode. Empty override → unchanged.
+	// spec.PermissionMode 必须产出一个 Checker：沿用父级的 Sandbox / RuleEngine，
+	// 但把 Mode 换掉。override 为空 → 原样返回。
 	sb := permissions.NewPathSandbox("/tmp", "")
 	eng := &permissions.RuleEngine{}
 	parent := permissions.NewChecker(sb, eng, permissions.ModeDefault)
@@ -68,9 +69,8 @@ func TestRunForkRejectedWhenQuerySourceIsFork(t *testing.T) {
 		Registry:     tools.NewRegistry(),
 		Conversation: conversation.NewManager(),
 		QuerySource:  ForkQuerySource,
-		TaskMgr:      NewTaskManager(),
 	}
-	result := tool.runFork(context.Background(), "desc", "do work", "", "")
+	result := tool.runFork(context.Background(), "desc", "do work", "")
 	if !result.IsError {
 		t.Fatal("runFork should reject when QuerySource is fork")
 	}
@@ -86,9 +86,8 @@ func TestRunForkRejectedWhenBoilerplateInHistory(t *testing.T) {
 	tool := &AgentTool{
 		Registry:     tools.NewRegistry(),
 		Conversation: conv,
-		TaskMgr:      NewTaskManager(),
 	}
-	result := tool.runFork(context.Background(), "desc", "do work", "", "")
+	result := tool.runFork(context.Background(), "desc", "do work", "")
 	if !result.IsError {
 		t.Fatal("runFork should reject when conversation history contains ForkBoilerplateTag")
 	}
@@ -98,7 +97,7 @@ func TestCloneRegistryForForkSetsQuerySource(t *testing.T) {
 	// fork 必须原样继承父工具池，只把其中的 Agent 工具换成带 QuerySource=ForkQuerySource
 	// 的拷贝，这样再往下 fork 会在调用那一刻被拦住。
 	reg := tools.NewRegistry()
-	reg.Register(&AgentTool{}) // simulate parent's Agent tool
+	reg.Register(&AgentTool{}) // 模拟父级的 Agent 工具
 	reg.Register(&dummyTool{name: "Bash", category: tools.CategoryCommand})
 
 	forked := cloneRegistryForFork(reg)
@@ -114,11 +113,10 @@ func TestCloneRegistryForForkSetsQuerySource(t *testing.T) {
 	}
 }
 
-func TestExecuteRoutesBackgroundSpecToAsync(t *testing.T) {
-	// Agent 定义里标了 background 就必须走异步，调用方没传 run_in_background 也一样。
+func TestExecuteRejectsUnknownAgentType(t *testing.T) {
+	// 未知 subagent_type 必须报错并列出可用角色，而不是静默回退。
 	tool := &AgentTool{
 		Registry: tools.NewRegistry(),
-		TaskMgr:  NewTaskManager(),
 		Protocol: "anthropic",
 	}
 	result := tool.Execute(context.Background(), map[string]any{
@@ -126,20 +124,33 @@ func TestExecuteRoutesBackgroundSpecToAsync(t *testing.T) {
 		"prompt":        "do it",
 		"subagent_type": "background-only",
 	})
-	if !result.IsError {
-		// Without a registered spec the call should fail; that's the only safe shape under unit testing —
-		// but it must not get there via the sync path. The IsError = true with "unknown agent type"
-		// message confirms parameter parsing reached the spec lookup.
-		if !strings.Contains(result.Output, "unknown agent type") {
-			t.Errorf("expected unknown-agent-type error, got %q", result.Output)
-		}
+	if !result.IsError || !strings.Contains(result.Output, "unknown agent type") {
+		t.Errorf("expected unknown-agent-type error, got %q", result.Output)
+	}
+}
+
+// IsConcurrencySafe 是 fan-out 的关键开关：普通子 Agent 必须判为并发安全，
+// 同一轮里连续派出的多个调用才会被归入同一并发批次；teammate 有注册副作用，
+// 必须保持串行。
+func TestAgentToolIsConcurrencySafe(t *testing.T) {
+	plain := &AgentTool{}
+	if !plain.IsConcurrencySafe(map[string]any{"description": "x", "prompt": "y"}) {
+		t.Error("plain sub-agent spawn should be concurrency-safe")
+	}
+
+	withTeams := &AgentTool{TeamMgr: teams.NewTeamManager()}
+	if withTeams.IsConcurrencySafe(map[string]any{"team_name": "squad"}) {
+		t.Error("teammate spawn must stay serial")
+	}
+	// 没有 team_name 时不会走 teammate 路径，仍按同步子 Agent 处理。
+	if !withTeams.IsConcurrencySafe(map[string]any{"description": "x"}) {
+		t.Error("spawn without team_name should be concurrency-safe")
 	}
 }
 
 func TestExecuteValidatesMode(t *testing.T) {
 	tool := &AgentTool{
 		Registry: tools.NewRegistry(),
-		TaskMgr:  NewTaskManager(),
 	}
 
 	badMode := tool.Execute(context.Background(), map[string]any{

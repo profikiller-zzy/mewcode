@@ -47,7 +47,7 @@ Do the thing.
 
 func TestLoadMewcodeSkills(t *testing.T) {
 	wd, _ := os.Getwd()
-	// Walk up to find project root
+	// 向上逐级找项目根目录
 	for wd != "/" {
 		if _, err := os.Stat(filepath.Join(wd, ".mewcode", "skills")); err == nil {
 			break
@@ -201,7 +201,7 @@ body content`), 0o644)
 func TestSkillIntegration(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create two skills
+	// 创建两个 skill
 	s1Dir := filepath.Join(dir, "greeting")
 	os.MkdirAll(s1Dir, 0o755)
 	os.WriteFile(filepath.Join(s1Dir, "SKILL.md"), []byte(`---
@@ -236,7 +236,7 @@ Provide a concise summary of the given text.
 		t.Fatalf("expected 2 skills, got %d", len(metas))
 	}
 
-	// Verify both skills are retrievable
+	// 确认两个 skill 都能取到
 	for _, name := range []string{"greeting", "summarize"} {
 		s := catalog.Get(name)
 		if s == nil {
@@ -250,7 +250,7 @@ Provide a concise summary of the given text.
 		}
 	}
 
-	// Simulate system prompt building (same logic as tui.go)
+	// 模拟系统提示词拼装（逻辑同 tui.go）
 	var sb strings.Builder
 	sb.WriteString("## Available Skills\n\n")
 	sb.WriteString("Skills are installed at: " + dir + "\n")
@@ -278,17 +278,17 @@ Provide a concise summary of the given text.
 		t.Fatal("system prompt missing /summarize command")
 	}
 
-	// Simulate skill command handler (same logic as tui.go)
+	// 模拟 skill 命令处理（逻辑同 tui.go）
 	skill := catalog.Get("greeting")
 	body := skill.PromptBody
 
-	// Without args
+	// 不带参数
 	result := body
 	if !strings.Contains(result, "Greeting Skill") {
 		t.Fatal("handler without args should return skill body")
 	}
 
-	// With args
+	// 带参数
 	args := "say hi to Alice"
 	result = body + "\n\n## User Request\n\n" + args
 	if !strings.Contains(result, "## User Request") {

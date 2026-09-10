@@ -19,8 +19,8 @@ import (
 	"mewcode/internal/worktree"
 )
 
-// sanitizeSlugSegment replaces any character outside [a-zA-Z0-9._-] with '-' and trims redundant
-// separators so the result is safe for a git branch name.
+// sanitizeSlugSegment 把 [a-zA-Z0-9._-] 之外的字符替换成 '-'，并去掉多余的
+// 分隔符，保证结果可以安全地用作 git 分支名。
 var unsafeSlugChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 func sanitizeSlugSegment(s string) string {
@@ -36,6 +36,9 @@ func sanitizeSlugSegment(s string) string {
 }
 
 type SubAgentProgress struct {
+	// AgentID 是一次 spawn 的稳定标识。并发跑多个子 Agent 时 description 可能
+	// 重名，UI 靠它区分各自的活动块。空串时（旧调用方）退回 AgentDesc 匹配。
+	AgentID   string
 	AgentDesc string
 	AgentType string
 	ToolName  string
@@ -65,21 +68,20 @@ type AgentTool struct {
 	ModelResolver func(string) (llm.Client, error)
 	Registry      *tools.Registry
 	Protocol      string
-	TaskMgr       *TaskManager
 	ProgressCh    chan<- SubAgentProgress
 	Loader        *AgentLoader
-	Conversation  *conversation.Manager // parent conversation, needed for Fork
-	TeamMgr       *teams.TeamManager    // optional, enables team_name parameter
+	Conversation  *conversation.Manager // 父对话，fork 需要
+	TeamMgr       *teams.TeamManager    // 可选，有它才支持 team_name 参数
 
-	// ParentChecker is the parent agent's permission checker. The Sandbox and RuleEngine are reused;
-	// only Mode is overridden when the sub-agent definition / call sets a different permissionMode.
-	// Optional — when nil, sub-agents inherit no checker (early bootstrap / tests).
+	// ParentChecker 是父 Agent 的权限检查器。Sandbox 和 RuleEngine 复用父级的；
+	// 只有当 sub-agent 定义 / 调用里指定了不同的 permissionMode 时才覆盖 Mode。
+	// 可选 —— 为 nil 时子 Agent 拿不到检查器（早期引导 / 测试场景）。
 	ParentChecker *permissions.Checker
 
-	// QuerySource identifies the spawning agent for nested-fork detection. Empty for the main thread;
-	// set to ForkQuerySource (or "agent:builtin:<type>") when the AgentTool instance lives inside a
-	// spawned sub-agent. Compaction-resistant — survives even when the fork boilerplate gets
-	// summarized out of conversation history.
+	// QuerySource 标识发起派生的 Agent，用于嵌套 fork 检测。主线程里为空；
+	// 当这个 AgentTool 实例位于某个已派生的 sub-agent 内部时，设为 ForkQuerySource
+	// （或 "agent:builtin:<type>"）。它抗压缩 —— 即使 fork 样板
+	// 被从对话历史里摘要掉了也还在。
 	QuerySource string
 
 	// ForkDisabled 为真时，省略 subagent_type 不再 fork，而是回退到通用 agent。
@@ -90,6 +92,15 @@ type AgentTool struct {
 
 func (t *AgentTool) Name() string                 { return "Agent" }
 func (t *AgentTool) Category() tools.ToolCategory { return tools.CategoryCommand }
+
+// IsConcurrencySafe 声明 Agent 调用可以并发执行。同一轮里连续的多个 Agent 调用
+// 会被 StreamingExecutor 归入同一并发批次并行跑，结果按提交顺序回填 ——
+// fan-out / fan-in 由主循环的工具批次机制直接提供，无需额外协调。
+// teammate 路径例外：建团队、注册成员、建 worktree 都是带副作用的注册动作，保持串行。
+func (t *AgentTool) IsConcurrencySafe(args map[string]any) bool {
+	teamName, _ := args["team_name"].(string)
+	return teamName == "" || t.TeamMgr == nil
+}
 
 func (t *AgentTool) Description() string {
 	desc := `Launch a sub-agent to handle a complex task. Each sub-agent runs independently with its own context. The sub-agent cannot see the current conversation.
@@ -121,8 +132,9 @@ Example call shape:
   }
 }
 
-Write a detailed prompt explaining what the sub-agent should do and why — it has no prior context.
-When tasks are independent, launch multiple sub-agents in parallel by making multiple Agent tool calls in a single response.`
+Write a detailed prompt explaining what the sub-agent should do and why — it has no prior context (omit subagent_type to fork the current conversation instead, inheriting its context).
+When tasks are independent, launch multiple sub-agents in parallel by making multiple Agent tool calls in a single response: they run concurrently and every result returns together.
+When multiple parallel sub-agents may write files, pass isolation "worktree" so their edits don't collide.`
 	return desc
 }
 
@@ -156,18 +168,14 @@ func (t *AgentTool) Schema() map[string]any {
 					"enum":        []string{"sonnet", "opus", "haiku"},
 					"description": "Override the model for this agent.",
 				},
-				"run_in_background": map[string]any{
-					"type":        "boolean",
-					"description": "Set to true to run the agent in the background.",
-				},
 				"name": map[string]any{
 					"type":        "string",
-					"description": "Name for the agent, enabling SendMessage communication.",
+					"description": "Name for a team teammate (requires team_name), enabling SendMessage communication.",
 				},
 				"isolation": map[string]any{
 					"type":        "string",
 					"enum":        []string{"worktree"},
-					"description": "Isolation mode. Set to 'worktree' to give the agent its own git worktree so its file edits don't collide with peers or the lead. REQUIRED when spawning two or more teammates in parallel that may write files; STRONGLY RECOMMENDED for any single teammate doing non-trivial file edits while the lead is still working in the same repo. Skip only for read-only tasks (explore/grep/plan) or when you explicitly want the teammate to share your working tree.",
+					"description": "Isolation mode. Set to 'worktree' to give the agent its own git worktree so its file edits don't collide with peers or the lead. REQUIRED when spawning two or more agents in parallel (sub-agents or teammates) that may write files; STRONGLY RECOMMENDED for any single agent doing non-trivial file edits while the lead is still working in the same repo. Skip only for read-only tasks (explore/grep/plan) or when you explicitly want the agent to share your working tree.",
 				},
 				"plan_mode_required": map[string]any{
 					"type":        "boolean",
@@ -213,7 +221,6 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 
 	subagentType, _ := args["subagent_type"].(string)
 	modelOverride, _ := args["model"].(string)
-	runInBackground, _ := args["run_in_background"].(bool)
 	agentName, _ := args["name"].(string)
 	teamName, _ := args["team_name"].(string)
 	modeOverride, _ := args["mode"].(string)
@@ -227,9 +234,9 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 		}
 	}
 
-	// Team-member path: an explicit team_name turns this spawn into a long-running teammate under that
-	// team's backend. The lead gets control back as soon as the teammate boots; further coordination
-	// flows through SendMessage / mailbox notifications.
+	// 团队成员路径：显式给了 team_name，这次派生就变成该团队 backend 下
+	// 长期运行的 teammate。teammate 一启动 Lead 就拿回控制权，后续协调走
+	// SendMessage / mailbox 通知。
 	if teamName != "" && t.TeamMgr != nil {
 		return t.runAsTeammate(ctx, teamName, agentName, description, prompt, modelOverride, subagentType, isolation, planModeRequired)
 	}
@@ -241,12 +248,12 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 		subagentType = GeneralPurposeAgentType
 	}
 
-	// Fork path: no subagent_type specified.
+	// 没有指定 subagent_type则走fork subagent
 	if subagentType == "" {
-		return t.runFork(ctx, description, prompt, modelOverride, agentName)
+		return t.runFork(ctx, description, prompt, modelOverride)
 	}
 
-	// Definition path: resolve spec from loader or builtins.
+	// 定义路径：从 loader 或内置表里解析 spec。
 	var spec SubAgentSpec
 	if t.Loader != nil {
 		def := t.Loader.Get(subagentType)
@@ -268,16 +275,14 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 		spec = s
 	}
 
-	// Per-call mode override beats the definition's permissionMode.
+	// 单次调用的 mode 覆盖优先于定义里的 permissionMode。
 	if modeOverride != "" {
 		spec.PermissionMode = modeOverride
 	}
 
-	// 调用方传 run_in_background，或者 Agent 定义自己标了 background，都走异步派发。
-	// 两个条件是或的关系：定义里声明的后台属性不该被调用方漏传而失效。
-	if runInBackground || spec.Background {
-		return t.runAsync(ctx, spec, description, prompt, modelOverride)
-	}
+	// 同步执行：主 Agent 阻塞在这条工具调用上直到子 Agent 结束。同一轮里连续
+	// 派出的多个 Agent 调用会并发跑（见 IsConcurrencySafe），全部结束后结果
+	// 一起作为工具结果回到主对话 —— 不再有后台异步路径。
 	return t.runSync(ctx, spec, description, prompt, modelOverride, isolation)
 }
 
@@ -293,7 +298,7 @@ func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description,
 		subAgent.MaxIterations = 200
 	}
 
-	// Worktree isolation: create an isolated worktree for the sub-agent.
+	// Worktree 隔离：给 sub-agent 创建一个独立的 worktree。
 	var wtResult *worktree.AgentWorktreeResult
 	if isolation == "worktree" {
 		slug := generateAgentSlug(description)
@@ -307,7 +312,7 @@ func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description,
 		}
 		subAgent.WorkDir = wtResult.WorktreePath
 
-		// Inject worktree notice into the prompt.
+		// 把 worktree 提示注入 prompt。
 		parentCwd, _ := os.Getwd()
 		notice := worktree.BuildWorktreeNotice(parentCwd, wtResult.WorktreePath)
 		prompt = notice + "\n\n" + prompt
@@ -317,93 +322,150 @@ func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description,
 	if spec.SystemPromptOverride != "" {
 		conv.AddSystemReminder(spec.SystemPromptOverride)
 	}
-	// initialPrompt is prepended to the first user turn.
+	// initialPrompt 会被拼在第一轮 user 消息前面。
 	if spec.InitialPrompt != "" {
 		conv.AddUserMessage(spec.InitialPrompt)
 	}
 	conv.AddUserMessage(prompt)
 
+	// 同步阻塞到子 Agent 结束，结果作为工具返回值直接回到主 Agent。
+	outcome := runSubAgentToCompletion(ctx, subAgent, conv, t.ProgressCh, newSubAgentID(), description, spec.Name)
+
+	if outcome.errMsg != "" {
+		// 失败也带上已产出的部分结果：子 Agent 失败前的工作对主 Agent 仍然有
+		// 价值，一句错误信息把它扔掉等于白跑。
+		msg := fmt.Sprintf("Agent failed: %s", outcome.errMsg)
+		if outcome.output != "" {
+			msg += "\n\nPartial output before failure:\n" + outcome.output
+		}
+		if kept := finishWorktree(ctx, wtResult); kept {
+			msg += fmt.Sprintf("\n\nWorktree kept at %s (branch %s) — has uncommitted changes or new commits.",
+				wtResult.WorktreePath, wtResult.WorktreeBranch)
+		}
+		return tools.ToolResult{Output: msg, IsError: true}
+	}
+
+	result := outcome.output
+	if result == "" {
+		result = "(agent produced no output)"
+	}
+
+	// Worktree 清理：干净的就自动删掉，脏的就保留。上面的失败路径同样会清理，
+	// 失败的运行不会泄漏 worktree。
+	if kept := finishWorktree(ctx, wtResult); kept {
+		result += fmt.Sprintf("\n\nWorktree kept at %s (branch %s) — has uncommitted changes or new commits.",
+			wtResult.WorktreePath, wtResult.WorktreeBranch)
+	}
+
+	return tools.ToolResult{
+		Output: fmt.Sprintf("Agent \"%s\" completed in %s.\n\n%s", description, outcome.elapsed.Round(time.Millisecond), result),
+	}
+}
+
+// finishWorktree 在子 Agent 结束后处理它的隔离 worktree：有未提交改动或新提交
+// 就保留（返回 true），干净就删掉。wtResult 为 nil 时是空操作，返回 false。
+// 成功与失败路径都要调用，否则失败的运行会泄漏 worktree。
+func finishWorktree(ctx context.Context, wtResult *worktree.AgentWorktreeResult) bool {
+	if wtResult == nil {
+		return false
+	}
+	if worktree.HasWorktreeChanges(ctx, wtResult.WorktreePath, wtResult.HeadCommit) {
+		return true
+	}
+	worktree.RemoveAgentWorktree(ctx, wtResult.WorktreePath, wtResult.WorktreeBranch, wtResult.GitRoot)
+	return false
+}
+
+// subAgentOutcome 是一次同步子 Agent 运行的产出。失败时 output 仍携带失败前
+// 已产出的部分结果，调用方把它连同错误一起返回给主 Agent，避免信息丢失。
+type subAgentOutcome struct {
+	output    string
+	errMsg    string
+	toolCount int
+	elapsed   time.Duration
+}
+
+// runSubAgentToCompletion 启动一个子 Agent 并阻塞到它结束。期间把工具执行转发成
+// 进度事件（UI 用，best-effort，消费不过来就丢）；权限请求一律拒绝（headless，
+// 没有 UI 可问，自动 deny 让子 Agent 的 executeSingleTool 不至于卡在 respCh 上）。
+// 同一轮里并发的多个 Agent 调用各自阻塞在自己的事件流上，互不影响。
+func runSubAgentToCompletion(ctx context.Context, sub *agent.Agent, conv *conversation.Manager, progressCh chan<- SubAgentProgress, agentID, desc, agentType string) subAgentOutcome {
 	start := time.Now()
 	var output strings.Builder
 	toolCount := 0
-	ch := subAgent.Run(ctx, conv)
+	ch := sub.Run(ctx, conv)
 
 	for ev := range ch {
 		switch e := ev.(type) {
 		case agent.StreamText:
 			output.WriteString(e.Text)
 		case agent.PermissionRequestEvent:
-			// Sub-agents are headless — there's no UI to prompt. Auto-deny keeps the sub-agent's
-			// executeSingleTool unblocked instead of stalling on respCh forever. respCh has buffer=1, so
-			// this send is non-blocking.
+			// respCh 的 buffer=1，这次发送不会阻塞。
 			e.ResponseCh <- agent.PermDeny
 		case agent.ToolResultEvent:
 			toolCount++
-			emitProgress(t.ProgressCh, ctx, SubAgentProgress{
-				AgentDesc: description,
-				AgentType: spec.Name,
+			emitProgress(progressCh, ctx, SubAgentProgress{
+				AgentID:   agentID,
+				AgentDesc: desc,
+				AgentType: agentType,
 				ToolName:  e.ToolName,
 				ToolArgs:  map[string]any{"_summary": e.Output},
 				Elapsed:   e.Elapsed.Seconds(),
 				IsError:   e.IsError,
 			})
 		case agent.ErrorEvent:
-			emitProgress(t.ProgressCh, ctx, SubAgentProgress{
-				AgentDesc: description,
-				AgentType: spec.Name,
+			emitProgress(progressCh, ctx, SubAgentProgress{
+				AgentID:   agentID,
+				AgentDesc: desc,
+				AgentType: agentType,
 				Done:      true,
 				ToolCount: toolCount,
 				TotalTime: time.Since(start).Seconds(),
 				IsError:   true,
 			})
-			return tools.ToolResult{
-				Output:  fmt.Sprintf("Agent failed: %s", e.Message),
-				IsError: true,
+			return subAgentOutcome{
+				output:    output.String(),
+				errMsg:    e.Message,
+				toolCount: toolCount,
+				elapsed:   time.Since(start),
 			}
 		}
 	}
 
-	elapsed := time.Since(start)
-
-	emitProgress(t.ProgressCh, ctx, SubAgentProgress{
-		AgentDesc: description,
-		AgentType: spec.Name,
+	emitProgress(progressCh, ctx, SubAgentProgress{
+		AgentID:   agentID,
+		AgentDesc: desc,
+		AgentType: agentType,
 		Done:      true,
 		ToolCount: toolCount,
-		TotalTime: elapsed.Seconds(),
+		TotalTime: time.Since(start).Seconds(),
 	})
-
-	result := output.String()
-	if result == "" {
-		result = "(agent produced no output)"
-	}
-
-	// Worktree cleanup: if the sub-agent ran in an isolated worktree, auto-remove if clean, preserve
-	// if dirty.
-	if wtResult != nil {
-		if worktree.HasWorktreeChanges(ctx, wtResult.WorktreePath, wtResult.HeadCommit) {
-			result += fmt.Sprintf("\n\nWorktree kept at %s (branch %s) — has uncommitted changes or new commits.",
-				wtResult.WorktreePath, wtResult.WorktreeBranch)
-		} else {
-			worktree.RemoveAgentWorktree(ctx, wtResult.WorktreePath, wtResult.WorktreeBranch, wtResult.GitRoot)
-		}
-	}
-
-	return tools.ToolResult{
-		Output: fmt.Sprintf("Agent \"%s\" completed in %s.\n\n%s", description, elapsed.Round(time.Millisecond), result),
+	return subAgentOutcome{
+		output:    output.String(),
+		toolCount: toolCount,
+		elapsed:   time.Since(start),
 	}
 }
 
-func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverride, agentName string) tools.ToolResult {
+// newSubAgentID 生成一次 spawn 的稳定标识，供 UI 在并发时区分各子 Agent 的
+// 活动块。用随机值而不是自增计数器：fork 子 Agent 手里的 AgentTool 是父实例的
+// 浅拷贝，两边计数器会从同一初值出发，撞号后 UI 会把两个块混成一个。
+func newSubAgentID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return "sub-" + hex.EncodeToString(b)
+}
+
+func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverride string) tools.ToolResult {
 	if t.Conversation == nil {
 		return tools.ToolResult{Output: "Error: fork requires parent conversation context", IsError: true}
 	}
 
-	// Nested fork guard, two layers:
-	// (1) Primary: querySource — set on the AgentTool instance when it's constructed inside a fork
-	//     child. Compaction-resistant; catches the case where conversation history was rewritten or
-	//     summarized.
-	// (2) Fallback: message scan for ForkBoilerplateTag.
+	// 嵌套 fork 防护，分两层：
+	// (1) 主手段：querySource —— 在 fork 子 Agent 内部构造 AgentTool 实例时设置。
+	//     抗压缩；能覆盖对话历史被重写或摘要掉的情况。
+	//
+	// (2) 兜底：扫描消息里有没有 ForkBoilerplateTag。
 	if t.QuerySource == ForkQuerySource {
 		return tools.ToolResult{
 			Output:  "Error: cannot fork from a forked agent. Use subagent_type to spawn a definition-based agent instead.",
@@ -419,7 +481,7 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 		}
 	}
 
-	// Build forked conversation: copy parent messages + patch incomplete tool_use + append task.
+	// 构造 fork 对话：复制父消息 + 补齐未完成的 tool_use + 追加任务。
 	forkedConv := buildForkedConversation(t.Conversation, prompt)
 
 	client := t.selectClient("", modelOverride)
@@ -429,49 +491,37 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 	subRegistry := cloneRegistryForFork(t.Registry)
 
 	subAgent := agent.New(client, subRegistry, t.Protocol)
-	subAgent.Checker = t.ParentChecker // fork inherits parent's permission state verbatim
+	subAgent.Checker = t.ParentChecker // fork 原样继承父 Agent 的权限状态
 	subAgent.MaxIterations = 200
 
-	// Fork always runs in background.
-	taskName := "fork"
-	if agentName != "" {
-		taskName = agentName
-	}
-	taskID := t.TaskMgr.CreateTask(taskName + ": " + truncate(prompt, 50))
-	forkCtx, cancel := context.WithCancel(ctx)
-	t.TaskMgr.SetRunning(taskID, cancel)
+	// fork 同步运行：主 Agent 阻塞在这条工具调用上直到 fork 结束，结果作为工具
+	// 返回值直接进入主对话。同一轮里连续派出的多个 fork 会被 StreamingExecutor
+	// 归入同一并发批次并行执行，全部结束后结果一起回填 —— fan-in 由主循环提供。
+	outcome := runSubAgentToCompletion(ctx, subAgent, forkedConv, t.ProgressCh, newSubAgentID(), description, ForkAgentType)
 
-	go func() {
-		var output string
-		ch := subAgent.Run(forkCtx, forkedConv)
-		for ev := range ch {
-			switch e := ev.(type) {
-			case agent.StreamText:
-				output += e.Text
-			case agent.PermissionRequestEvent:
-				// Headless: auto-deny so the fork doesn't stall on respCh.
-				e.ResponseCh <- agent.PermDeny
-			case agent.ErrorEvent:
-				t.TaskMgr.SetFailed(taskID, e.Message)
-				return
-			}
+	if outcome.errMsg != "" {
+		// 失败也带上已产出的部分结果，理由同 runSync。
+		msg := fmt.Sprintf("Forked agent failed: %s", outcome.errMsg)
+		if outcome.output != "" {
+			msg += "\n\nPartial output before failure:\n" + outcome.output
 		}
-		t.TaskMgr.SetCompleted(taskID, output)
-	}()
+		return tools.ToolResult{Output: msg, IsError: true}
+	}
 
+	result := outcome.output
+	if result == "" {
+		result = "(agent produced no output)"
+	}
 	return tools.ToolResult{
-		Output: fmt.Sprintf(
-			"Forked agent \"%s\" launched in background (task %s). Results will arrive via task-notification.",
-			description, taskID,
-		),
+		Output: fmt.Sprintf("Forked agent \"%s\" completed in %s.\n\n%s", description, outcome.elapsed.Round(time.Millisecond), result),
 	}
 }
 
-// emitProgress sends a SubAgentProgress event without ever blocking the caller. If the consumer
-// (TUI) is behind, the event is dropped — progress is best-effort UI feedback, not load-bearing
-// state. Blocking sends here caused sub-agent loops to deadlock when ProgressCh's buffer filled up,
-// which in turn prevented ESC / ctx cancel from ever taking effect because the sub-agent was stuck
-// in this send rather than at a ctx-aware point.
+// emitProgress 发送一个 SubAgentProgress 事件，且绝不阻塞调用方。如果消费方
+// （TUI）跟不上，事件直接丢掉 —— 进度只是尽力而为的 UI 反馈，不承担关键
+// 状态。这里如果用阻塞发送，ProgressCh 的 buffer 一满就会让 sub-agent 循环
+// 死锁，进而导致 ESC / ctx cancel 永远不生效，因为 sub-agent 卡在了这次发送上，
+// 而不是卡在能感知 ctx 的地方。
 func emitProgress(ch chan<- SubAgentProgress, ctx context.Context, p SubAgentProgress) {
 	if ch == nil {
 		return
@@ -480,16 +530,16 @@ func emitProgress(ch chan<- SubAgentProgress, ctx context.Context, p SubAgentPro
 	case ch <- p:
 	case <-ctx.Done():
 	default:
-		// Consumer is behind. Drop the event rather than stalling the sub-agent's event loop.
+		// 消费方跟不上了。丢掉这个事件，也别把 sub-agent 的事件循环卡住。
 	}
 }
 
-// deriveSubAgentChecker threads a sub-agent's permissionMode through to the spawned agent: `mode`
-// overrides the agent definition's permissionMode, which then feeds the sub-agent's
-// ToolPermissionContext. The Sandbox and RuleEngine are shared — we only swap the Mode so the
-// sub-agent's tool calls hit a different decision matrix without diverging permission state.
+// deriveSubAgentChecker 把 sub-agent 的 permissionMode 透传给派生出来的 agent：
+// `mode` 覆盖 agent 定义里的 permissionMode，再喂给 sub-agent 的
+// ToolPermissionContext。Sandbox 和 RuleEngine 是共用的 —— 只换 Mode，
+// 这样 sub-agent 的工具调用会命中另一套判定矩阵，而权限状态不会分叉。
 //
-// Returns the parent checker unchanged when no override is requested.
+// 没有要求覆盖时原样返回父级 checker。
 func deriveSubAgentChecker(parent *permissions.Checker, modeOverride string) *permissions.Checker {
 	if parent == nil {
 		return nil
@@ -500,8 +550,8 @@ func deriveSubAgentChecker(parent *permissions.Checker, modeOverride string) *pe
 	return permissions.NewChecker(parent.Sandbox, parent.RuleEngine, permissions.PermissionMode(modeOverride))
 }
 
-// cloneRegistryForFork returns a registry that copies the parent verbatim except that any
-// *AgentTool instance is replaced with a shallow copy whose QuerySource is set to ForkQuerySource.
+// cloneRegistryForFork 返回的 registry 原样复制父级，唯一区别是把其中的
+// *AgentTool 实例换成 QuerySource 设为 ForkQuerySource 的浅拷贝。
 // 这样 fork 子 Agent 看到的工具定义和父 Agent 在协议层完全一样（prompt 缓存因此命中），
 // 但它再想 fork 时会在调用那一刻被 runFork 里的 QuerySource 检查拦下。
 func cloneRegistryForFork(reg *tools.Registry) *tools.Registry {
@@ -532,9 +582,9 @@ func buildForkedConversation(parent *conversation.Manager, task string) *convers
 	forked := conversation.NewManager()
 	msgs := parent.GetMessages()
 
-	// Byte-exact replay: preserve thinking blocks alongside tool_use so the API request prefix matches
-	// the parent's exactly (cf. "keeping all content blocks (thinking, text, and every tool_use)").
-	// Missing thinking blocks would change the assistant message shape and bust the prompt cache.
+	// 逐字节重放：把 thinking block 和 tool_use 一起保留，这样 API 请求前缀和
+	// 父 Agent 完全一致（参见「保留所有 content block（thinking、text 和每个 tool_use）」）。
+	// 少了 thinking block 会改变 assistant 消息的形状，prompt cache 就打不中了。
 	for _, msg := range msgs {
 		if len(msg.ToolUses) > 0 && len(msg.ToolResults) == 0 {
 			forked.AddAssistantFull(msg.Content, msg.ThinkingBlocks, msg.ToolUses)
@@ -562,30 +612,18 @@ func buildForkedConversation(parent *conversation.Manager, task string) *convers
 		}
 	}
 
-	// Append fork boilerplate + task as user message.
+	// 把 fork 样板和任务作为 user 消息追加在后面。
 	forked.AddUserMessage(forkBoilerplate + "\n\nYour task:\n" + task)
 	return forked
 }
 
-func (t *AgentTool) runAsync(ctx context.Context, spec SubAgentSpec, description, prompt, modelOverride string) tools.ToolResult {
-	client := t.selectClient(spec.Model, modelOverride)
-	taskID := SpawnSubAgent(ctx, t.TaskMgr, client, t.Registry, t.Protocol, spec, prompt, t.ParentChecker)
-
-	return tools.ToolResult{
-		Output: fmt.Sprintf(
-			"Agent \"%s\" launched in background (task %s). You will be notified when it completes.",
-			description, taskID,
-		),
-	}
-}
-
-// runAsTeammate registers a long-running team member on an existing Team. Unlike runSync/runAsync,
-// this path never blocks the lead on the member's output: the lead always returns immediately and
-// coordinates through SendMessage + idle notifications in the team mailbox. The backend (in-process
-// / tmux / iTerm) is picked from Team.Mode by teams.SpawnTeammate.
+// runAsTeammate 在一个已有的 Team 上登记一个长期运行的团队成员。和
+// runSync 不同，这条路径从不让 Lead 阻塞等成员的输出：Lead 总是
+// 立刻返回，之后通过 SendMessage 和团队 mailbox 里的 idle 通知来协调。
+// backend（in-process / tmux / iTerm）由 teams.SpawnTeammate 根据 Team.Mode 选择。
 //
-// When isolation == "worktree" and a WorktreeMgr is configured, the teammate gets a dedicated git
-// worktree so its file edits don't collide with peers' work.
+// 当 isolation == "worktree" 且配了 WorktreeMgr 时，teammate 会拿到一个专属的
+// git worktree，这样它改文件就不会和别的成员撞车。
 func (t *AgentTool) runAsTeammate(
 	ctx context.Context,
 	teamName, memberName, description, prompt, modelOverride, subagentType, isolation string,
@@ -608,8 +646,8 @@ func (t *AgentTool) runAsTeammate(
 		}
 	}
 
-	// Resolve spec when subagent_type is set so the teammate respects the same disallow list any other
-	// sub-agent of that type would. Without a spec we hand the full registry to the teammate.
+	// 设了 subagent_type 就解析出 spec，好让 teammate 遵守同类型 sub-agent
+	// 的禁用列表。没有 spec 时就把整个 registry 交给 teammate。
 	var spec SubAgentSpec
 	if subagentType != "" {
 		if t.Loader != nil {
@@ -682,8 +720,8 @@ func (t *AgentTool) runAsTeammate(
 		}
 	}
 
-	// In-process spawns hand back a live event channel; drain it in the background so the goroutine
-	// doesn't block on a full chan. Lead-visible progress flows through the mailbox, not this drain.
+	// in-process 派生会返回一个活的 event channel；在后台把它抽干，免得 goroutine
+	// 卡在满的 chan 上。Lead 能看到的进度走 mailbox，不靠这里的抽干。
 	if result.Mode == teams.ModeInProcess && result.EventCh != nil {
 		go drainTeammateEvents(memberName, result.EventCh, t.ProgressCh)
 	}
@@ -703,9 +741,9 @@ func (t *AgentTool) runAsTeammate(
 	}
 }
 
-// drainTeammateEvents consumes a teammate's event stream so the producer side never blocks on a
-// full channel. Tool/error events are forwarded to ProgressCh when set so the parent UI can show
-// activity.
+// drainTeammateEvents 消费 teammate 的事件流，让生产侧永远不会卡在满的
+// channel 上。设了 ProgressCh 时，工具/错误事件会转发过去，
+// 好让父级 UI 显示活动状态。
 func drainTeammateEvents(name string, ch <-chan agent.AgentEvent, progressCh chan<- SubAgentProgress) {
 	for ev := range ch {
 		if progressCh == nil {
@@ -731,7 +769,7 @@ func drainTeammateEvents(name string, ch <-chan agent.AgentEvent, progressCh cha
 	}
 }
 
-// generateAgentSlug produces a slug matching ^agent-a[0-9a-f]{7}$ for sub-agent worktrees.x.
+// generateAgentSlug 为 sub-agent 的 worktree 生成一个匹配 ^agent-a[0-9a-f]{7}$ 的 slug。
 func generateAgentSlug(description string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)

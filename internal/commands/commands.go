@@ -12,11 +12,11 @@ const (
 	TypeLocal   CommandType = "local"
 	TypeLocalUI CommandType = "local-ui"
 	TypePrompt  CommandType = "prompt"
-	// TypeSkillFork is for skills declared with `mode: fork`. The handler
-	// runs the skill in an isolated sub-agent (no main-loop touch) and
-	// returns the final assistant text; the TUI dispatcher inserts that
-	// text into the main chat as an assistant message instead of pumping
-	// it through the regular Agent Loop.
+	// TypeSkillFork 用于以 `mode: fork` 声明的 skill。handler
+	// 会在一个隔离的 sub-agent 里跑这个 skill（不碰主循环），
+	// 并返回最终的 assistant 文本；TUI 派发器会把这段文本作为 assistant
+	// 消息直接插进主聊天，而不是再走一遍
+	// 常规的 Agent Loop。
 	TypeSkillFork CommandType = "skill-fork"
 )
 
@@ -29,7 +29,7 @@ type Context struct {
 	ToolCount      func() int
 	SessionInfo    func() string
 	SkillList      func() []SkillInfo
-	SkillReload    func() int // reload catalog + prompt, returns new skill count
+	SkillReload    func() int // 重新加载 catalog + prompt，返回新的 skill 数量
 	MCPInfo        func() string
 	WorkDir        string
 	Model          string
@@ -85,10 +85,10 @@ func (r *Registry) Register(cmd *Command) {
 	}
 }
 
-// HasConflict reports whether cmd's name or any of its aliases would collide
-// with something already in the registry. Dynamic loaders (e.g. user
-// commands from disk) should call this before Register to filter out
-// conflicting entries, since Register panics on collision.
+// HasConflict 报告 cmd 的名字或它的任一别名是否会和注册表里
+// 已有的东西冲突。动态加载器（比如从磁盘加载的用户命令）
+// 应该在 Register 之前先调用它过滤掉冲突的条目，
+// 因为 Register 遇到冲突会 panic。
 func (r *Registry) HasConflict(cmd *Command) bool {
 	if r.Find(cmd.Name) != nil {
 		return true

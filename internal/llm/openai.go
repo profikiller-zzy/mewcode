@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"mewcode/internal/config"
@@ -21,11 +22,13 @@ import (
 const openaiStreamIdleTimeout = 5 * time.Minute
 
 type openaiClient struct {
-	client          openai.Client
-	model           string
-	thinking        bool
-	systemPrompt    string
-	maxOutputTokens int
+	client       openai.Client
+	model        string
+	thinking     bool
+	systemPrompt string
+	// maxOutputTokens 用 atomic：client 实例被主 Agent 与多个并发子 Agent 共享，
+	// SetMaxOutputTokens 与请求构造可能并发执行（同 anthropicClient）。
+	maxOutputTokens atomic.Int64
 	contextWindow   int
 }
 
@@ -42,14 +45,15 @@ func newOpenAIClient(cfg *config.ProviderConfig, systemPrompt string) (*openaiCl
 		option.WithBaseURL(cfg.BaseURL),
 	)
 
-	return &openaiClient{
-		client:          client,
-		model:           cfg.Model,
-		thinking:        cfg.Thinking,
-		systemPrompt:    systemPrompt,
-		maxOutputTokens: cfg.GetMaxOutputTokens(),
-		contextWindow:   cfg.GetContextWindow(),
-	}, nil
+	c := &openaiClient{
+		client:        client,
+		model:         cfg.Model,
+		thinking:      cfg.Thinking,
+		systemPrompt:  systemPrompt,
+		contextWindow: cfg.GetContextWindow(),
+	}
+	c.maxOutputTokens.Store(int64(cfg.GetMaxOutputTokens()))
+	return c, nil
 }
 
 func (c *openaiClient) SetSystemPrompt(prompt string) {
@@ -57,7 +61,7 @@ func (c *openaiClient) SetSystemPrompt(prompt string) {
 }
 
 func (c *openaiClient) SetMaxOutputTokens(tokens int) {
-	c.maxOutputTokens = tokens
+	c.maxOutputTokens.Store(int64(tokens))
 }
 
 func (c *openaiClient) Stream(ctx context.Context, conv *conversation.Manager, toolSchemas []map[string]any) (<-chan StreamEvent, <-chan error) {
@@ -112,9 +116,9 @@ func (c *openaiClient) Stream(ctx context.Context, conv *conversation.Manager, t
 		var currentToolName, currentCallID, jsonAccum string
 		var reasoningID, reasoningText string
 
-		// Read SSE events in a separate goroutine so we can respect ctx cancellation
-		// and detect silent connection drops. The SDK's stream.Next() may block
-		// indefinitely if the underlying connection dies without FIN/RST.
+		// 在单独的 goroutine 里读 SSE 事件，这样既能响应 ctx 取消，
+		// 也能发现连接静默断开。底层连接在没发 FIN/RST 就断了的话，
+		// SDK 的 stream.Next() 可能会一直阻塞。
 		type sseResult struct {
 			hasNext bool
 		}
@@ -196,11 +200,11 @@ func (c *openaiClient) Stream(ctx context.Context, conv *conversation.Manager, t
 				if event.Response.Usage.InputTokens != 0 || event.Response.Usage.OutputTokens != 0 {
 					usage.InputTokens = int(event.Response.Usage.InputTokens)
 					usage.OutputTokens = int(event.Response.Usage.OutputTokens)
-					// cache_read from input_tokens_details.cached_tokens; the
-					// Responses API has no cache_creation counterpart, so it's 0.
+					// cache_read 取 input_tokens_details.cached_tokens；
+					// Responses API 没有对应的 cache_creation，所以那一项为 0。
 					usage.CacheReadTokens = int(event.Response.Usage.InputTokensDetails.CachedTokens)
-					// input_tokens already includes the cached prefix; subtract so the
-					// usage anchor (input + cache_read) doesn't double-count it.
+					// input_tokens 已经包含了被缓存的前缀；减掉它，
+					// 好让用量锚点（input + cache_read）不重复计数。
 					usage.InputTokens -= usage.CacheReadTokens
 					if usage.InputTokens < 0 {
 						usage.InputTokens = 0

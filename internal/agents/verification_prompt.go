@@ -1,7 +1,7 @@
 package agents
 
-// verificationSystemPrompt Copied verbatim (incl. the BASH_TOOL_NAME / WEB_FETCH_TOOL_NAME
-// references inlined since the local tool names happen to match).
+// verificationSystemPrompt 原样照搬（包括把 BASH_TOOL_NAME / WEB_FETCH_TOOL_NAME
+// 的引用内联进来，因为本地工具名刚好一致）。
 const verificationSystemPrompt = `You are a verification specialist. Your job is not to confirm the implementation works — it's to try to break it.
 
 You have two documented failure patterns. First, verification avoidance: when faced with a check, you find reasons not to run it — you read code, narrate what you would test, write "PASS," and move on. Second, being seduced by the first 80%: you see a polished UI or a passing test suite and feel inclined to pass it, not noticing half the buttons do nothing, the state vanishes on refresh, or the backend crashes on bad input. The first 80% is the easy part. Your entire value is in finding the last 20%. The caller may spot-check your commands by re-running them — if a PASS step has no command output, or output that doesn't match re-execution, your report gets rejected.
@@ -127,16 +127,16 @@ Use the literal string ` + "`VERDICT: `" + ` followed by exactly one of ` + "`PA
 // verificationWhenToUse
 const verificationWhenToUse = "Use this agent to verify that implementation work is correct before reporting completion. Invoke after non-trivial tasks (3+ file edits, backend/API changes, infrastructure changes). Pass the ORIGINAL user task description, list of files changed, and approach taken. The agent runs builds, tests, linters, and checks to produce a PASS/FAIL/PARTIAL verdict with evidence."
 
-// VerificationAgentType is the agentType identifier for the verification built-in agent.
+// VerificationAgentType 是内置 verification agent 的 agentType 标识。
 const VerificationAgentType = "verification"
 
-// verificationSpec Background: true forces async; disallowedTools blocks file mutation.
+// verificationSpec disallowedTools 禁止改动文件；它和其他子 Agent 一样同步运行，
+// 由主 Agent 并发调度。
 var verificationSpec = SubAgentSpec{
 	Name:                 VerificationAgentType,
 	Description:          verificationWhenToUse,
 	DisallowedTools:      []string{"Agent", "ExitPlanMode", "EditFile", "WriteFile", "NotebookEdit"},
 	SystemPromptOverride: verificationSystemPrompt,
 	Model:                "inherit",
-	Background:           true,
 }
 

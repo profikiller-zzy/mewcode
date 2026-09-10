@@ -12,13 +12,13 @@ func TestFileMailBoxSendAndRead(t *testing.T) {
 	inboxDir := filepath.Join(dir, "test-team", "inboxes")
 	mb := NewFileMailBox(inboxDir)
 
-	// Send message
+	// 发送消息
 	err := mb.Send("agent-b", FileMailMessage{From: "agent-a", Text: "Hello from A"})
 	if err != nil {
 		t.Fatal("Send failed:", err)
 	}
 
-	// Verify file
+	// 校验文件
 	data, err := os.ReadFile(filepath.Join(inboxDir, "agent-b.json"))
 	if err != nil {
 		t.Fatal("File not created:", err)
@@ -57,7 +57,7 @@ func TestFileMailBoxMarkAllRead(t *testing.T) {
 		t.Fatalf("Expected 0 unread after mark, got %d", len(unread))
 	}
 
-	// Messages still in file
+	// 消息仍然留在文件里
 	data, _ := os.ReadFile(filepath.Join(dir, "inboxes", "bob.json"))
 	var msgs []FileMailMessage
 	json.Unmarshal(data, &msgs)
@@ -105,7 +105,7 @@ func TestInjectPendingMessages(t *testing.T) {
 		t.Fatalf("Missing messages in result: %s", result)
 	}
 
-	// After inject, should be empty
+	// 注入之后应该为空
 	result2 := InjectPendingMessages(team, "bob")
 	if result2 != "" {
 		t.Fatalf("Expected empty after consume, got: %s", result2)

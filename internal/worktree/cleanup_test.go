@@ -23,11 +23,11 @@ func TestIsEphemeralSlug(t *testing.T) {
 		{"bridge-abc", true},
 		{"bridge-abc_def-ghi", true},
 		{"job-mytemplate-12345678", true},
-		// Should NOT match
+		// 不应该匹配
 		{"my-feature", false},
 		{"agent-too-long", false},
-		{"agent-a123", false},     // too short
-		{"agent-aGGGGGGG", false}, // non-hex
+		{"agent-a123", false},     // 太短
+		{"agent-aGGGGGGG", false}, // 非十六进制
 		{"wf_short", false},
 	}
 	for _, tt := range tests {
@@ -46,8 +46,8 @@ func TestCleanupStaleAgentWorktrees(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	// Add a fake remote so --not --remotes works (worktree HEAD is
-	// reachable from the remote, so rev-list returns empty)
+	// 加一个假的 remote 好让 --not --remotes 生效
+	// （worktree 的 HEAD 能从 remote 到达，所以 rev-list 返回空）
 	bare := t.TempDir()
 	exec.Command("git", "init", "--bare", bare).Run()
 	exec.Command("git", "-C", repo, "remote", "add", "origin", bare).Run()
@@ -57,24 +57,24 @@ func TestCleanupStaleAgentWorktrees(t *testing.T) {
 	defer os.Chdir(origDir)
 	os.Chdir(repo)
 
-	// Create an ephemeral worktree
+	// 创建一个 ephemeral 的 worktree
 	result, err := CreateAgentWorktree(context.Background(), "agent-aaaaaaaa")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	// Set mtime to 25 hours ago
+	// 把 mtime 设成 25 小时前
 	past := time.Now().Add(-25 * time.Hour)
 	os.Chtimes(result.WorktreePath, past, past)
 
-	// Cleanup with cutoff = 24 hours ago should remove it
+	// 以 24 小时前为 cutoff 清理，应该会把它删掉
 	cutoff := time.Now().Add(-24 * time.Hour)
 	removed := CleanupStaleAgentWorktrees(context.Background(), cutoff)
 	if removed != 1 {
 		t.Fatalf("expected 1 removed, got %d", removed)
 	}
 
-	// Directory should be gone
+	// 目录应该已经没了
 	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
 		t.Fatal("stale worktree should be removed")
 	}
@@ -92,18 +92,18 @@ func TestCleanupStaleAgentWorktrees_SkipsUserNamed(t *testing.T) {
 	defer os.Chdir(origDir)
 	os.Chdir(repo)
 
-	// Create a user-named worktree (not ephemeral)
+	// 创建一个用户命名的 worktree（非 ephemeral）
 	_, err := getOrCreateWorktree(context.Background(), repo, "my-feature")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
 	wtPath := WorktreePathFor(repo, "my-feature")
 
-	// Set mtime to past
+	// 把 mtime 设到过去
 	past := time.Now().Add(-48 * time.Hour)
 	os.Chtimes(wtPath, past, past)
 
-	// Cleanup should NOT remove user-named worktree
+	// 清理不应该删掉用户命名的 worktree
 	cutoff := time.Now().Add(-24 * time.Hour)
 	removed := CleanupStaleAgentWorktrees(context.Background(), cutoff)
 	if removed != 0 {
@@ -132,15 +132,15 @@ func TestCleanupStaleAgentWorktrees_SkipsDirtyWorktree(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	// Make it dirty
+	// 把它弄脏（产生未提交改动）
 	os.WriteFile(filepath.Join(result.WorktreePath, "dirty.txt"), []byte("dirty"), 0o644)
 	exec.Command("git", "-C", result.WorktreePath, "add", ".").Run()
 
-	// Set mtime to past
+	// 把 mtime 设到过去
 	past := time.Now().Add(-48 * time.Hour)
 	os.Chtimes(result.WorktreePath, past, past)
 
-	// Cleanup should skip the dirty worktree
+	// 清理应该跳过这个脏 worktree
 	cutoff := time.Now().Add(-24 * time.Hour)
 	removed := CleanupStaleAgentWorktrees(context.Background(), cutoff)
 	if removed != 0 {

@@ -7,12 +7,12 @@ import (
 	"mewcode/internal/tools"
 )
 
-// LoadSkillTool is the on-demand activation entry point. It's registered
-// into the main tool registry at startup with progressive-disclosure
-// semantics: the model sees a `## Available Skills` listing of every
-// skill's name + description in the system prompt, and calls LoadSkill
-// with the chosen name. The full SOP body is returned as the tool result
-// so it enters the conversation as a regular message.
+// LoadSkillTool 是按需激活的入口。它在启动时注册进主工具注册表，
+// 采用渐进式披露的语义：模型在系统提示词里看到一份
+// `## Available Skills` 清单，列出每个 skill 的
+// name + description，然后用选中的名字调用 LoadSkill。
+// 完整的 SOP 正文作为工具结果返回，
+// 从而以普通消息的形式进入对话。
 type LoadSkillTool struct {
 	Catalog *Catalog
 	Host    SkillHost

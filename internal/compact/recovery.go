@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// Recovery limits for the attachment block that gets appended to the
-// summary message. Compact wipes the working conversation; without these
-// snapshots the model would forget which files it just read and which
-// skill SOPs it was operating under.
+// 追加到摘要消息后面的附件块的大小上限。Compact 会清空当前对话；
+// 没有这些快照，模型就会忘记自己刚读过哪些文件、
+// 当时在按哪些
+// skill SOP 干活。
 const (
 	RecoveryFileLimit      = 5
 	RecoveryTokensPerFile  = 5_000
@@ -20,35 +20,35 @@ const (
 	recoveryCharsPerToken  = 3.5
 )
 
-// FileReadRecord snapshots the bytes a ReadFile call returned to the
-// model. Re-injected post-compact so the model still has the content it
-// was reasoning about when the threshold tripped.
+// FileReadRecord 记录一次 ReadFile 调用返回给模型的字节快照。
+// compact 之后会重新注入，好让模型在触发阈值那一刻
+// 正在推理的内容还在手边。
 type FileReadRecord struct {
 	Path      string
 	Content   string
 	Timestamp time.Time
 }
 
-// SkillInvocationRecord captures the SOP body that was attached when a
-// skill was invoked. After compaction the same definition gets stitched
-// back in so behaviour stays consistent across the boundary.
+// SkillInvocationRecord 保存调用 skill 时附带的 SOP 正文。
+// compact 之后同一份定义会被重新拼回去，
+// 使跨边界的行为保持一致。
 type SkillInvocationRecord struct {
 	Name      string
 	Body      string
 	Timestamp time.Time
 }
 
-// RecoveryState tracks the per-agent data that needs to survive
-// compaction. The struct is safe for concurrent recording — tool
-// callbacks can fire from parallel goroutines in the streaming
-// executor.
+// RecoveryState 记录需要在 compaction 之后存活的 per-agent 数据。
+// 这个结构体的写入是并发安全的 —— 流式执行器里
+// tool 回调可能来自流式 executor
+// 里并行的 goroutine。
 type RecoveryState struct {
 	mu     sync.Mutex
 	files  map[string]FileReadRecord
 	skills map[string]SkillInvocationRecord
 }
 
-// NewRecoveryState returns an empty state ready for recording.
+// NewRecoveryState 返回一个可以直接开始记录的空状态。
 func NewRecoveryState() *RecoveryState {
 	return &RecoveryState{
 		files:  map[string]FileReadRecord{},
@@ -56,8 +56,8 @@ func NewRecoveryState() *RecoveryState {
 	}
 }
 
-// RecordFileRead overwrites any prior record for the same path so the
-// most recent snapshot wins. Safe to call on a nil receiver.
+// RecordFileRead 会覆盖同一路径上的旧记录，让最新快照生效。
+// 在 nil receiver 上调用也是安全的。
 func (s *RecoveryState) RecordFileRead(path, content string) {
 	if s == nil || path == "" {
 		return
@@ -67,8 +67,8 @@ func (s *RecoveryState) RecordFileRead(path, content string) {
 	s.mu.Unlock()
 }
 
-// RecordSkillInvocation overwrites any prior record for the same skill
-// name. Safe to call on a nil receiver.
+// RecordSkillInvocation 会覆盖同一 skill 名下的旧记录。
+// 在 nil receiver 上调用也是安全的。
 func (s *RecoveryState) RecordSkillInvocation(name, body string) {
 	if s == nil || name == "" {
 		return
@@ -78,7 +78,7 @@ func (s *RecoveryState) RecordSkillInvocation(name, body string) {
 	s.mu.Unlock()
 }
 
-// snapshotFiles returns at most `limit` records, newest first.
+// snapshotFiles 最多返回 `limit` 条记录，按时间由新到旧。
 func (s *RecoveryState) snapshotFiles(limit int) []FileReadRecord {
 	if s == nil {
 		return nil
@@ -96,7 +96,7 @@ func (s *RecoveryState) snapshotFiles(limit int) []FileReadRecord {
 	return out
 }
 
-// snapshotSkills returns every recorded skill, newest first.
+// snapshotSkills 返回所有已记录的 skill，按时间由新到旧。
 func (s *RecoveryState) snapshotSkills() []SkillInvocationRecord {
 	if s == nil {
 		return nil
@@ -111,11 +111,11 @@ func (s *RecoveryState) snapshotSkills() []SkillInvocationRecord {
 	return out
 }
 
-// BuildRecoveryAttachment renders the post-compact recovery sections
-// (recently read files, skill definitions, tool listing, plus a closing
-// note about not guessing from the summary) into a single block of text.
-// Returns "" when there is nothing worth emitting so the caller can keep
-// the summary message clean.
+// BuildRecoveryAttachment 把 compact 之后用于恢复的各个小节
+// （最近读过的文件、skill 定义、工具清单，以及一段
+// 「别凭摘要瞎猜」的收尾提示）渲染成一整块文本。
+// 没什么可输出时返回 ""，好让调用方
+// 保持摘要消息干净。
 func BuildRecoveryAttachment(state *RecoveryState, toolSchemas []map[string]any) string {
 	var sb strings.Builder
 
@@ -182,8 +182,8 @@ func BuildRecoveryAttachment(state *RecoveryState, toolSchemas []map[string]any)
 	return sb.String()
 }
 
-// approxTokens uses the same chars-per-token heuristic as EstimateTokens
-// so budgeting stays consistent across the package.
+// approxTokens 用与 EstimateTokens 相同的「字符数/token」估算口径，
+// 这样整个包的预算计算保持一致。
 func approxTokens(s string) int {
 	if s == "" {
 		return 0
@@ -191,9 +191,9 @@ func approxTokens(s string) int {
 	return int(float64(len(s)) / recoveryCharsPerToken)
 }
 
-// truncateByTokens cuts s at the byte offset that puts it just under the
-// token budget and appends a marker so the model can see content was
-// clipped.
+// truncateByTokens 在刚好低于 token 预算的字节偏移处截断 s，
+// 并追加一个标记，
+// 让模型能看出内容被裁剪过。
 func truncateByTokens(s string, tokenBudget int) string {
 	if tokenBudget <= 0 || s == "" {
 		return s
@@ -208,8 +208,8 @@ func truncateByTokens(s string, tokenBudget int) string {
 	return s[:maxChars] + "\n… (content truncated)"
 }
 
-// firstLine returns the first non-empty line of s, trimmed. Used to keep
-// the tool listing compact when descriptions are multi-paragraph.
+// firstLine 返回 s 的第一行非空内容，并做 trim。用于在描述是多段文本时
+// 让工具清单保持紧凑。
 func firstLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
 		trimmed := strings.TrimSpace(line)

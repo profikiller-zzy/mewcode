@@ -105,27 +105,27 @@ func TestFormatFileSize(t *testing.T) {
 	}
 }
 
-// A session that contains a compact_boundary must rebuild to the COMPACTED
-// state on resume: the boundary's summary + the inlined kept tail + any plain
-// messages appended after the boundary — while the original pre-compaction
-// prefix written before the boundary is NOT replayed.
+// 含 compact_boundary 的会话在恢复时必须重建到「已压缩」状态：
+// boundary 的摘要 + 内联保留的尾部 + boundary 之后追加的普通消息 ——
+// 而 boundary 之前那段
+// 压缩前写入的原始前缀不会被重放。
 func TestFindLastCompactBoundary_RebuildsCompactedState(t *testing.T) {
 	dir := t.TempDir()
 	sid := "compacted-session"
 
-	// Original pre-compaction prefix (must NOT be replayed after the boundary).
+	// 压缩前的原始前缀（boundary 之后不应被重放）。
 	SaveMessage(dir, sid, Message{Role: "user", Content: "ORIGINAL-PREFIX-1", Ts: 1})
 	SaveMessage(dir, sid, Message{Role: "assistant", Content: "ORIGINAL-PREFIX-2", Ts: 2})
 	SaveMessage(dir, sid, Message{Role: "user", Content: "ORIGINAL-PREFIX-3", Ts: 3})
 
-	// Compaction fires: write a boundary inlining the summary + kept tail.
+	// 压缩触发：写一条 boundary，把摘要和保留的尾部内联进去。
 	keep := []KeepMessage{
 		{Role: "user", Content: "KEPT-TAIL-USER"},
 		{Role: "assistant", Content: "KEPT-TAIL-ASSISTANT"},
 	}
 	SaveCompactBoundary(dir, sid, "THE-SUMMARY", keep)
 
-	// Continuation after the boundary (must be replayed).
+	// boundary 之后的后续内容（必须被重放）。
 	SaveMessage(dir, sid, Message{Role: "user", Content: "AFTER-BOUNDARY-USER", Ts: 5})
 	SaveMessage(dir, sid, Message{Role: "assistant", Content: "AFTER-BOUNDARY-ASSISTANT", Ts: 6})
 
@@ -138,13 +138,13 @@ func TestFindLastCompactBoundary_RebuildsCompactedState(t *testing.T) {
 	if boundary.Summary != "THE-SUMMARY" {
 		t.Fatalf("summary mismatch: got %q", boundary.Summary)
 	}
-	// Kept tail (boundary-inlined) must round-trip with original role + content.
+	// 保留的尾部（内联在 boundary 里）必须原样往返，role 和 content 都不变。
 	if len(boundary.Keep) != 2 ||
 		boundary.Keep[0].Role != "user" || boundary.Keep[0].Content != "KEPT-TAIL-USER" ||
 		boundary.Keep[1].Role != "assistant" || boundary.Keep[1].Content != "KEPT-TAIL-ASSISTANT" {
 		t.Fatalf("kept tail not round-tripped: %+v", boundary.Keep)
 	}
-	// After-boundary messages present and in order; original prefix absent.
+	// boundary 之后的消息都在、且顺序正确；原始前缀不存在。
 	if len(after) != 2 {
 		t.Fatalf("expected 2 after-boundary messages, got %d: %+v", len(after), after)
 	}
@@ -157,9 +157,9 @@ func TestFindLastCompactBoundary_RebuildsCompactedState(t *testing.T) {
 		}
 	}
 
-	// Simulate the resume rebuild the TUI performs and assert the final
-	// reconstructed conversation: [summary] + keep + after, with no original
-	// prefix.
+	// 模拟 TUI 在 resume 时做的重建，并断言最终重建出来的对话：
+	// [摘要] + keep + after，
+	// 不含原始前缀。
 	var rebuilt []Message
 	rebuilt = append(rebuilt, Message{Role: "user", Content: boundary.Summary})
 	for _, k := range boundary.Keep {
@@ -186,8 +186,8 @@ func TestFindLastCompactBoundary_RebuildsCompactedState(t *testing.T) {
 	}
 }
 
-// The LAST boundary wins: a session compacted twice must rebuild from the most
-// recent boundary, and messages between the two boundaries must not replay.
+// 最后一条 boundary 说了算：压缩过两次的会话必须从最近的那条 boundary
+// 重建，两条 boundary 之间的消息不得重放。
 func TestFindLastCompactBoundary_UsesLastBoundary(t *testing.T) {
 	dir := t.TempDir()
 	sid := "twice-compacted"
@@ -214,8 +214,8 @@ func TestFindLastCompactBoundary_UsesLastBoundary(t *testing.T) {
 	}
 }
 
-// Backward compatibility: a session WITHOUT any boundary (old format) must
-// report ok=false so the caller replays every message verbatim.
+// 向后兼容：完全没有 boundary 的旧格式会话必须报告 ok=false，
+// 这样调用方就会逐条原样重放所有消息。
 func TestFindLastCompactBoundary_NoBoundaryFullReplay(t *testing.T) {
 	dir := t.TempDir()
 	sid := "legacy-session"

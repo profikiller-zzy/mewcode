@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AgentMemoryScope Persistent memory location: per-user, per-project, or per-checkout (not version
-// controlled).
+// AgentMemoryScope 持久化记忆的存放位置：按用户、按项目，或按 checkout
+// （不纳入版本控制）。
 type AgentMemoryScope string
 
 const (
@@ -18,7 +18,7 @@ const (
 	AgentMemoryScopeLocal   AgentMemoryScope = "local"
 )
 
-// IsolationMode encodes the `isolation` frontmatter field.
+// IsolationMode 对应 `isolation` frontmatter 字段。
 type IsolationMode string
 
 const (
@@ -26,9 +26,9 @@ const (
 	IsolationRemote   IsolationMode = "remote"
 )
 
-// AgentDefinition Fields with no runtime usage yet (Effort, Skills, McpServers, Hooks, Memory,
-// InitialPrompt, OmitMewcodeMd, RequiredMcpServers) are still parsed so user definitions don't lose
-// data on the round-trip and so future channels can pick them up without another schema migration.
+// AgentDefinition 中尚未被运行时使用的字段（Effort、Skills、McpServers、Hooks、
+// Memory、InitialPrompt、OmitMewcodeMd、RequiredMcpServers）仍然会被解析，这样用户的
+// 定义在往返读写时不会丢数据，未来的通道也可以直接取用，不必再迁一次 schema。
 type AgentDefinition struct {
 	AgentType       string   `yaml:"name"`
 	WhenToUse       string   `yaml:"description"`
@@ -37,50 +37,50 @@ type AgentDefinition struct {
 	Model           string   `yaml:"model"`
 	MaxTurns        int      `yaml:"maxTurns"`
 
-	// permissionMode overrides the parent agent's permission mode for this sub-agent. Valid values
-	// match internal/permissions.PermissionMode.
+	// permissionMode 覆盖父 Agent 的权限模式，只对当前 sub-agent 生效。合法取值与
+	// internal/permissions.PermissionMode 一致。
 	PermissionMode string `yaml:"permissionMode"`
 
-	// Effort is a hint to the model about task complexity ("low" | "medium" | "high" | int). Currently
-	// stored only, not yet consumed.
+	// Effort 是给模型的任务复杂度提示（"low" | "medium" | "high" | int）。
+	// 目前只存储，尚未消费。
 	Effort any `yaml:"effort"`
 
-	// Skills are skill names to preload when the sub-agent starts.
+	// Skills 是 sub-agent 启动时要预加载的 skill 名。
 	Skills []string `yaml:"skills"`
 
-	// McpServers are MCP server names or inline configs scoped to this agent. Stored as raw any so
-	// future loading can interpret either string refs or inline configs.
+	// McpServers 是作用范围限定在当前 Agent 的 MCP server 名或内联配置。以 raw any
+	// 存储，这样将来的加载逻辑既能解释字符串引用，也能解释内联配置。
 	McpServers []any `yaml:"mcpServers"`
 
-	// RequiredMcpServers gates the agent: if listed servers aren't available at load time, the agent
-	// is filtered out by hasRequiredMcpServers.
+	// RequiredMcpServers 是 Agent 的准入门槛：如果列出的 server 在加载时不可用，
+	// 该 Agent 会被 hasRequiredMcpServers 过滤掉。
 	RequiredMcpServers []string `yaml:"requiredMcpServers"`
 
-	// Hooks are session-scoped hooks registered when this agent starts. Stored as raw YAML; the hooks
-	// package will type-check on consumption.
+	// Hooks 是 Agent 启动时注册的、作用范围为 session 的 hook。以原始 YAML 存储；
+	// hooks 包会在消费时做类型检查。
 	Hooks any `yaml:"hooks"`
 
-	// Memory enables persistent memory in one of three scopes.
+	// Memory 在三种 scope 之一中启用持久化记忆。
 	Memory AgentMemoryScope `yaml:"memory"`
 
-	// Background forces this agent to always run as a background task when spawned, regardless of
-	// run_in_background parameter.
+	// Background 已废弃：异步 sub-agent 路径已整体移除（一律主 Agent 同步等待 +
+	// 子 Agent 并发运行）。字段保留解析只为让存量定义文件不报错，运行期不再消费。
 	Background bool `yaml:"background"`
 
-	// Isolation selects a file-system isolation mode for the spawn.
+	// Isolation 为派生选择文件系统隔离模式。
 	Isolation IsolationMode `yaml:"isolation"`
 
-	// InitialPrompt is prepended to the first user turn (slash commands work).
+	// InitialPrompt 会被前置到第一轮 user turn（slash command 也能用）。
 	InitialPrompt string `yaml:"initialPrompt"`
 
-	// OmitMewcodeMd drops the MEWCODE.md hierarchy from this agent's user context. Read-only agents
-	// (Explore, Plan) save tokens by skipping it.
+	// OmitMewcodeMd 从该 Agent 的 user context 中去掉 MEWCODE.md 层级。只读 Agent
+	// （Explore、Plan）跳过它可以省 token。
 	OmitMewcodeMd bool `yaml:"omitMewcodeMd"`
 
-	// SystemPrompt is the Markdown body of the definition file.
+	// SystemPrompt 是定义文件的 Markdown 正文。
 	SystemPrompt string `yaml:"-"`
 
-	// FilePath / Source / Filename are populated at load time.
+	// FilePath / Source / Filename 在加载时填充。
 	FilePath string `yaml:"-"`
 	Source   string `yaml:"-"`
 	Filename string `yaml:"-"`
@@ -138,10 +138,10 @@ func ParseAgentFile(path string) (*AgentDefinition, error) {
 		return nil, fmt.Errorf("agent definition %s: missing required field 'description'", path)
 	}
 
-	// Normalize and validate `model`. Matches AgentJsonSchema: only "must be a non-empty string" —
-	// actual availability is left to the host's ModelResolver / LLM router. Third-party model names
-	// like "glm-5.1" must round-trip. Lowercase "inherit" normalizes to "inherit" (the sentinel that
-	// means "use parent's client"); everything else stays verbatim so the router can match.
+	// 规范化并校验 `model`。与 AgentJsonSchema 保持一致：只要求「必须是非空字符串」——
+	// 实际是否可用交给宿主的 ModelResolver / LLM router 判断。第三方模型名
+	// （例如 "glm-5.1"）必须能原样往返。小写的 "inherit" 归一成 "inherit"
+	// （表示「使用父级 client」的哨兵值）；其他值原样保留，便于 router 匹配。
 	def.Model = strings.TrimSpace(def.Model)
 	if strings.EqualFold(def.Model, "inherit") {
 		def.Model = "inherit"
@@ -172,7 +172,6 @@ func (d *AgentDefinition) ToSpec() SubAgentSpec {
 		MaxTurns:             d.MaxTurns,
 		Model:                d.Model,
 		PermissionMode:       d.PermissionMode,
-		Background:           d.Background,
 		Isolation:            d.Isolation,
 		InitialPrompt:        d.InitialPrompt,
 		OmitMewcodeMd:         d.OmitMewcodeMd,
@@ -185,8 +184,8 @@ func (d *AgentDefinition) ToSpec() SubAgentSpec {
 	}
 }
 
-// HasRequiredMcpServers Returns true when the agent has no MCP requirements or every required
-// pattern matches an available server name (case-insensitive substring).
+// HasRequiredMcpServers 当该 Agent 没有 MCP 要求，或者每个 required pattern
+// 都能匹配到某个可用的 server 名（大小写不敏感的子串匹配）时返回 true。
 func (d *AgentDefinition) HasRequiredMcpServers(availableServers []string) bool {
 	if len(d.RequiredMcpServers) == 0 {
 		return true

@@ -19,15 +19,15 @@ type ToolCallComplete struct {
 type UsageInfo struct {
 	InputTokens  int
 	OutputTokens int
-	// CacheReadTokens is the number of input tokens served from the prompt
-	// cache (Anthropic cache_read_input_tokens; OpenAI
-	// prompt_tokens_details.cached_tokens). These are NOT counted in
-	// InputTokens by Anthropic, so the true prompt size is
-	// InputTokens + CacheReadTokens + CacheCreationTokens.
+	// CacheReadTokens 是从 prompt cache 里读出的 input token 数
+	// （Anthropic 的 cache_read_input_tokens；OpenAI 的
+	// prompt_tokens_details.cached_tokens）。Anthropic 不会把它们算进
+	// InputTokens，所以真实的 prompt 大小是
+	// InputTokens + CacheReadTokens + CacheCreationTokens。
 	CacheReadTokens int
-	// CacheCreationTokens is the number of input tokens written into the
-	// prompt cache this turn (Anthropic cache_creation_input_tokens). Zero
-	// for providers that don't report it.
+	// CacheCreationTokens 是本轮写入 prompt cache 的 input token 数
+	// （Anthropic 的 cache_creation_input_tokens）。不上报该值的
+	// provider 为 0。
 	CacheCreationTokens int
 }
 

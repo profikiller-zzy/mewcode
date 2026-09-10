@@ -20,17 +20,17 @@ type InstructionSource struct {
 // LoadInstructions 查找并拼接项目级和用户级指令文件。
 //
 // 查找顺序（后加载的层追加在后面，因此模型会优先关注它）：
-//  1. User global: ~/.mewcode/MEWCODE.md, ~/.mewcode/AGENTS.md
-//  2. Project: walk from git root down to workDir, picking up MEWCODE.md,
-//     AGENTS.md and .mewcode/MEWCODE.md in each directory (so the file
-//     closest to cwd wins)
-//  3. workDir/MEWCODE.local.md (private local override)
+//  1. 用户级全局：~/.mewcode/MEWCODE.md、~/.mewcode/AGENTS.md
+//  2. 项目级：从 git 根目录逐层向下走到 workDir，在每个目录里收集 MEWCODE.md、
+//     AGENTS.md 和 .mewcode/MEWCODE.md（所以离 cwd
+//     最近的那个文件优先）
+//  3. workDir/MEWCODE.local.md（私有的本地覆盖）
 //
 // @include 指令规则：
-//   - @./relative/path, @~/home/path, or @/absolute/path
-//   - Resolved relative to the including file's directory
-//   - Skipped inside fenced code blocks
-//   - Cycle-safe (same absolute path is never included twice)
+//   - @./relative/path、@~/home/path 或 @/absolute/path
+//   - 相对包含该指令的文件所在目录解析
+//   - 代码块（fenced code block）内部会跳过
+//   - 有环安全保护（同一个绝对路径不会被包含两次）
 func LoadInstructions(workDir string) string {
 	sources := DiscoverInstructions(workDir)
 	if len(sources) == 0 {

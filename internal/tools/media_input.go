@@ -15,21 +15,21 @@ import (
 	"strings"
 )
 
-// inputImageRawBudget is the largest JPEG byte size we'll pack into a data URI
-// for img2img. Agnes accepts data URIs up to ~80KB total length; base64 inflates
-// the payload by ~33%, so capping the raw JPEG at 50KB keeps the final URI
-// comfortably under that threshold.
+// inputImageRawBudget 是我们允许塞进 data URI 的最大 JPEG 字节数，
+// 用于 img2img。Agnes 接受的 data URI 总长上限约 80KB，而 base64 会把
+// 载荷撑大 33% 左右，所以把原始 JPEG 卡在 50KB，
+// 最终的 URI 就能稳稳低于那个阈值。
 const inputImageRawBudget = 50 * 1024
 
-// prepareInputImage normalizes one input_images entry for the upstream API.
+// prepareInputImage 把 input_images 里的一项规范化后交给上游 API。
 //
-//   - http(s):// URLs pass through unchanged — the provider fetches them itself
-//     and there's no useful size cap to enforce on a URL.
-//   - data: URIs and local file paths get decoded, downscaled, and re-encoded as
-//     JPEG until they fit inputImageRawBudget, then returned as a data URI.
+//   - http(s):// 开头的 URL 原样放过 —— 供应商自己会去取，
+//     对 URL 也没什么有意义的大小上限可卡。
+//   - data: URI 和本地文件路径会先解码、降采样，再重新编码成
+//     JPEG 直到塞进 inputImageRawBudget，最后以 data URI 返回。
 //
-// workDir is used to resolve relative paths. Returns ("", err) on unreadable
-// files or undecodable images.
+// workDir 用来解析相对路径。文件读不到或图片解不出来时
+// 返回 ("", err)。
 func prepareInputImage(in, workDir string) (string, error) {
 	if in == "" {
 		return "", errors.New("empty input image")
@@ -71,10 +71,10 @@ func prepareInputImage(in, workDir string) (string, error) {
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpegBytes), nil
 }
 
-// shrinkToBudget JPEG-encodes img, lowering quality first and then halving
-// dimensions, until the encoded byte count is <= budget. Returns the smallest
-// encoded form we managed to produce; only errors out if even an 8x8 thumbnail
-// can't fit (which would mean budget is absurdly small).
+// shrinkToBudget 把 img 编码成 JPEG：先降质量，再把尺寸减半，
+// 直到编码后的字节数 <= budget。返回我们能产出的最小编码结果；
+// 只有当连 8x8 缩略图都塞不下时才报错
+// （那意味着 budget 小得离谱）。
 func shrinkToBudget(img image.Image, budget int) ([]byte, error) {
 	qualities := []int{82, 65, 45, 28}
 	for {
@@ -96,9 +96,9 @@ func shrinkToBudget(img image.Image, budget int) ([]byte, error) {
 	}
 }
 
-// halve returns img downscaled to half width and half height using 2x2 box
-// averaging. Box filtering is cheap and produces clean downsamples — exact
-// reconstruction isn't needed since the result feeds an img2img model.
+// halve 用 2x2 盒式平均把 img 缩到宽高各一半。
+// 盒式滤波开销小、降采样干净 —— 反正结果要喂给 img2img 模型，
+// 不需要精确还原。
 func halve(src image.Image) image.Image {
 	sb := src.Bounds()
 	w, h := sb.Dx()/2, sb.Dy()/2
@@ -121,11 +121,11 @@ func halve(src image.Image) image.Image {
 	return dst
 }
 
-// validateVideoInputURL enforces that a generate_video input image is a public
-// http(s) URL. The Agnes video endpoint accepts URLs only — local paths and
-// data URIs trip its base64 / fetch handling and the task fails async with a
-// confusing "Invalid image" error, which used to read to callers as a generic
-// "parse error" retry loop.
+// validateVideoInputURL 要求 generate_video 的输入图必须是公开的
+// http(s) URL。Agnes 的视频端点只接受 URL —— 本地路径和
+// data URI 会绊到它的 base64 / fetch 处理逻辑，任务会异步失败并
+// 抛出一个让人摸不着头脑的 "Invalid image" 错误，以前调用方
+// 看到的就是一遍遍通用的 "parse error" 重试。
 func validateVideoInputURL(in string) error {
 	if in == "" {
 		return errors.New("empty input image")
@@ -140,8 +140,8 @@ func validateVideoInputURL(in string) error {
 	return fmt.Errorf("video input_images must be public http(s) URLs (got %q); upload the image to a reachable URL first", in)
 }
 
-// decodeDataURI returns the raw bytes from a "data:[mime];base64,..." string.
-// Non-base64 data URIs are rejected since the API only round-trips base64.
+// decodeDataURI 从 "data:[mime];base64,..." 字符串里取出原始字节。
+// 非 base64 的 data URI 一律拒绝，因为 API 只往返 base64。
 func decodeDataURI(s string) ([]byte, error) {
 	comma := strings.IndexByte(s, ',')
 	if comma < 0 {

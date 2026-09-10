@@ -28,7 +28,7 @@ type Snapshot struct {
 type History struct {
 	mu           sync.Mutex
 	sessionDir   string
-	trackedFiles map[string]int // filepath → current version
+	trackedFiles map[string]int // filepath → 当前版本
 	snapshots    []Snapshot
 }
 
@@ -46,9 +46,9 @@ func backupName(filePath string, version int) string {
 	return fmt.Sprintf("%x@v%d", h[:8], version)
 }
 
-// TrackEdit backs up the file at path before it gets modified. Call this before
-// any write/edit operation. If the file doesn't exist yet (new file), no backup
-// is created but the path is still tracked so Rewind can delete it.
+// TrackEdit 在 path 指向的文件被修改之前先做备份，任何 write/edit 操作前都要调用。
+// 文件还不存在时（新文件）不生成备份，但仍然记录这个路径，
+// 这样 Rewind 才知道要把它删掉。
 func (h *History) TrackEdit(path string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -66,14 +66,14 @@ func (h *History) TrackEdit(path string) {
 		bp := filepath.Join(h.sessionDir, backupName(absPath, newVer))
 		_ = os.WriteFile(bp, data, 0o644)
 	}
-	// If file doesn't exist, we still bump the version so Rewind knows the file
-	// didn't exist at this version (no backup file on disk → delete on rewind).
+	// 文件不存在时照样把版本号 +1，这样 Rewind 知道在这个版本上
+	// 文件并不存在（磁盘上没有备份文件 → 回滚时删掉）。
 
 	h.trackedFiles[absPath] = newVer
 }
 
-// MakeSnapshot creates a checkpoint associated with the given conversation
-// message index. userText is a short label for the UI.
+// MakeSnapshot 创建一个检查点，绑定到给定的对话消息索引。
+// userText 是给 UI 看的简短标签。
 func (h *History) MakeSnapshot(msgIndex int, userText string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -102,7 +102,7 @@ func (h *History) MakeSnapshot(msgIndex int, userText string) {
 	}
 }
 
-// GetSnapshots returns a copy of all snapshots for UI display.
+// GetSnapshots 返回所有快照的副本，供 UI 展示。
 func (h *History) GetSnapshots() []Snapshot {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -111,8 +111,8 @@ func (h *History) GetSnapshots() []Snapshot {
 	return out
 }
 
-// Rewind restores files to the state captured in the snapshot at the given
-// index. Returns the list of files that were actually changed.
+// Rewind 把文件恢复到指定索引处快照记录的状态，
+// 返回实际发生改动的文件列表。
 func (h *History) Rewind(snapshotIndex int) ([]string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -127,7 +127,7 @@ func (h *History) Rewind(snapshotIndex int) ([]string, error) {
 	for path, backup := range target.Backups {
 		backupData, err := os.ReadFile(backup.BackupPath)
 		if err != nil {
-			// Backup file missing → file didn't exist at that point; delete it
+			// 备份文件缺失 → 那个时间点文件并不存在；删掉它
 			if _, statErr := os.Stat(path); statErr == nil {
 				_ = os.Remove(path)
 				changed = append(changed, path)
@@ -159,10 +159,10 @@ func (h *History) Rewind(snapshotIndex int) ([]string, error) {
 		delete(h.trackedFiles, path)
 	}
 
-	// Truncate snapshots: remove everything after the target
+	// 截断快照列表：删掉 target 之后的所有记录
 	h.snapshots = h.snapshots[:snapshotIndex+1]
 
-	// Reset tracked file versions to the snapshot's versions
+	// 把已追踪文件的版本号重置为快照里的版本
 	for path, backup := range target.Backups {
 		h.trackedFiles[path] = backup.Version
 	}
@@ -170,14 +170,14 @@ func (h *History) Rewind(snapshotIndex int) ([]string, error) {
 	return changed, nil
 }
 
-// HasSnapshots returns true if there's at least one snapshot to rewind to.
+// HasSnapshots 在至少有一个可回滚的快照时返回 true。
 func (h *History) HasSnapshots() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.snapshots) > 0
 }
 
-// Save persists snapshot metadata to disk.
+// Save 把快照元数据持久化到磁盘。
 func (h *History) Save() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

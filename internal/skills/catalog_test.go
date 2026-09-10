@@ -58,7 +58,7 @@ func TestCatalogGetFullHotReload(t *testing.T) {
 		t.Errorf("v1 body mismatch: %q", skill.PromptBody)
 	}
 
-	// Overwrite source file — GetFull must re-read.
+	// 覆盖源文件 —— GetFull 必须重新读取。
 	updated := "---\nname: hot\ndescription: hot reload demo\n---\n\nversion 2"
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(updated), 0o644); err != nil {
 		t.Fatalf("rewrite: %v", err)
@@ -83,10 +83,10 @@ func TestCatalogNeedsReload(t *testing.T) {
 		t.Error("NeedsReload should be false right after LoadCatalog")
 	}
 
-	// Ensure filesystem tick so modtime differs (ext4 can have 1s granularity).
+	// 确保文件系统的时间往前跳一格，好让 modtime 不同（ext4 粒度可能是 1 秒）。
 	time.Sleep(10 * time.Millisecond)
 
-	// Add a new skill directory — parent modtime changes.
+	// 新增一个 skill 目录 —— 父目录的 modtime 会变。
 	writeSkillDir(t, skillsDir, "beta",
 		"name: beta\ndescription: second skill", "body beta")
 
@@ -94,7 +94,7 @@ func TestCatalogNeedsReload(t *testing.T) {
 		t.Error("NeedsReload should be true after adding a new skill dir")
 	}
 
-	// After reload, NeedsReload resets.
+	// reload 之后，NeedsReload 会复位。
 	cat.Reload(work)
 	if cat.NeedsReload() {
 		t.Error("NeedsReload should be false after Reload")

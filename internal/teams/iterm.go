@@ -6,16 +6,16 @@ import (
 	"strings"
 )
 
-// ModeITerm spawns each teammate in its own iTerm2 tab via AppleScript.
-// macOS-only; detectBackend selects it when ITERM_SESSION_ID is set.
+// ModeITerm 通过 AppleScript 把每个 teammate 拉到各自独立的 iTerm2 tab 里。
+// 仅 macOS；当 ITERM_SESSION_ID 存在时 detectBackend 会选它。
 const ModeITerm TeamMode = "iterm"
 
-// spawnITermTeammate opens a new iTerm2 tab and runs cliCommand in it.
-// Returns the script-side tab identifier ("team-member") so the caller can
-// later target it for shutdown.
+// spawnITermTeammate 打开一个新的 iTerm2 tab 并在里面运行 cliCommand。
+// 返回脚本侧的 tab 标识（"team-member"），
+// 这样调用方之后可以针对它做关闭。
 func spawnITermTeammate(teamName, memberName, cliCommand string) (string, error) {
 	tabName := fmt.Sprintf("%s-%s", teamName, memberName)
-	// Escape any embedded double quotes so the AppleScript string literal stays valid.
+	// 把内嵌的双引号转义掉，保证 AppleScript 字符串字面量仍然合法。
 	safeCmd := strings.ReplaceAll(cliCommand, `"`, `\"`)
 	safeName := strings.ReplaceAll(tabName, `"`, `\"`)
 	script := fmt.Sprintf(`tell application "iTerm2"
@@ -38,8 +38,8 @@ end tell`, safeName, safeCmd)
 	return tabName, nil
 }
 
-// stopITermTeammate closes the iTerm2 tab created by spawnITermTeammate.
-// Best-effort: missing tab / closed window are not reported as errors.
+// stopITermTeammate 关闭 spawnITermTeammate 创建的那个 iTerm2 tab。
+// 尽力而为：tab 不存在 / 窗口已关闭都不算错误。
 func stopITermTeammate(tabName string) {
 	safeName := strings.ReplaceAll(tabName, `"`, `\"`)
 	script := fmt.Sprintf(`tell application "iTerm2"

@@ -97,7 +97,7 @@ func (mb *FileMailBox) MarkAllRead(agentID string) error {
 	})
 }
 
-// withLock acquires a file lock, reads the inbox, applies the mutation, and writes back.
+// withLock 获取文件锁，读取收件箱，应用修改，然后写回。
 func (mb *FileMailBox) withLock(agentID string, fn func([]FileMailMessage) ([]FileMailMessage, error)) error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
@@ -136,16 +136,16 @@ func (mb *FileMailBox) withLock(agentID string, fn func([]FileMailMessage) ([]Fi
 	lockFd.Close()
 	defer os.Remove(lockFile)
 
-	// Re-read inbox after acquiring lock
+	// 拿到锁之后重新读一次收件箱
 	messages, _ := mb.readInbox(agentID)
 
-	// Apply mutation
+	// 应用修改
 	messages, err = fn(messages)
 	if err != nil {
 		return err
 	}
 
-	// Write back
+	// 写回
 	return mb.writeInbox(agentID, messages)
 }
 

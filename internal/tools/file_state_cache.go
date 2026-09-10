@@ -7,11 +7,11 @@ import (
 	"sync"
 )
 
-// FileStateCache tracks which files have been read and their modification
-// times, enforcing a "read-before-edit" discipline to prevent blind overwrites.
+// FileStateCache 记录哪些文件被读过以及它们的修改时间，
+// 以此强制「先读后改」的规矩，避免盲写覆盖。
 type FileStateCache struct {
 	mu      sync.Mutex
-	entries map[string]int64 // path → mtime (UnixMilli)
+	entries map[string]int64 // 路径 → mtime（UnixMilli）
 }
 
 func NewFileStateCache() *FileStateCache {
@@ -20,7 +20,7 @@ func NewFileStateCache() *FileStateCache {
 	}
 }
 
-// Record stores the file mtime after a successful read.
+// Record 在成功读取后记录文件的 mtime。
 func (c *FileStateCache) Record(filePath string, mtime int64) {
 	abs := normalizePath(filePath)
 	c.mu.Lock()
@@ -28,9 +28,9 @@ func (c *FileStateCache) Record(filePath string, mtime int64) {
 	c.entries[abs] = mtime
 }
 
-// Check verifies that a file has been read and hasn't been modified since.
-// Returns (true, "") if OK, or (false, errorMessage) if the edit should be
-// blocked.
+// Check 校验文件是否被读过、之后有没有被改动过。
+// 通过时返回 (true, "")，需要拦截编辑时
+// 返回 (false, errorMessage)。
 func (c *FileStateCache) Check(filePath string) (bool, string) {
 	abs := normalizePath(filePath)
 	c.mu.Lock()
@@ -43,7 +43,7 @@ func (c *FileStateCache) Check(filePath string) (bool, string) {
 
 	info, err := os.Stat(abs)
 	if err != nil {
-		// File might have been deleted — let the caller handle that.
+		// 文件可能已被删除 —— 交给调用方处理。
 		return true, ""
 	}
 	currentMtime := info.ModTime().UnixMilli()
@@ -54,7 +54,7 @@ func (c *FileStateCache) Check(filePath string) (bool, string) {
 	return true, ""
 }
 
-// Update refreshes the cache entry after a successful edit or write.
+// Update 在编辑或写入成功后刷新缓存条目。
 func (c *FileStateCache) Update(filePath string) {
 	abs := normalizePath(filePath)
 	info, err := os.Stat(abs)

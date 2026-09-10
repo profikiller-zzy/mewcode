@@ -62,6 +62,9 @@ type chatMessage struct {
 }
 
 type subAgentBlock struct {
+	// agentID 对应 SubAgentProgress.AgentID：并发 fan-out 时靠它把进度事件
+	// 路由到各自的活动块，避免多个子 Agent 的工具混进同一个块。
+	agentID   string
 	desc      string
 	agentType string
 	toolUses  []toolBlockInfo
@@ -98,11 +101,11 @@ type compactDoneMsg struct {
 	err     error
 }
 
-// forkSkillDoneMsg is dispatched when a fork-mode Skill's sub-agent has
-// reached LoopComplete (or failed). Update injects result as a single
-// assistant chatMessage into the main conversation log so the user sees
-// the sub-agent's final answer without it polluting the parent agent's
-// context window.
+// forkSkillDoneMsg 在 fork 模式 Skill 的 sub-agent 到达
+// LoopComplete（或失败）时被派发。Update 把结果作为一条
+// assistant chatMessage 注入主对话记录，让用户看到 sub-agent 的
+// 最终回答，同时又不会污染父 agent 的
+// 上下文窗口。
 type forkSkillDoneMsg struct {
 	name   string
 	result string
@@ -191,13 +194,15 @@ type Model struct {
 	rewindDialog       bool
 	rewindSnapshots    []filehistory.Snapshot
 	rewindCursor       int
-	rewindPhase        int // 0=select checkpoint, 1=select restore option
+	rewindPhase        int // 0=选择检查点，1=选择恢复方式
 	rewindOptionCursor int
 
 	askUserCh          chan tools.AskUserRequest
 	subAgentProgressCh chan agents.SubAgentProgress
-	activeSubAgent     *subAgentBlock
-	askUserDialog      bool
+	// activeSubAgents 是本轮正在跑的子 Agent 活动块。fan-out 时同一轮会有多个，
+	// 用 slice 保持 spawn 顺序，进度事件按 AgentID 路由到各自的块。
+	activeSubAgents []*subAgentBlock
+	askUserDialog   bool
 	askUserQuestions   []tools.Question
 	askUserCursors     []int
 	askUserSelected    []map[int]bool
@@ -304,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(msg.Width - 4)
 
 		statusHeight := 1
-		sepHeight := 2 // top + bottom separators around input
+		sepHeight := 2 // 输入框上下的分隔线
 		inputHeight := m.textarea.Height() + 1
 		vpHeight := msg.Height - statusHeight - sepHeight - inputHeight - 1
 		if vpHeight < 1 {
@@ -326,27 +331,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case subAgentProgressMsg:
-		p := msg.progress
-		if p.Done {
-			if m.activeSubAgent != nil {
-				m.activeSubAgent.done = true
-				m.activeSubAgent.toolCount = p.ToolCount
-				m.activeSubAgent.totalTime = p.TotalTime
-			}
-		} else {
-			if m.activeSubAgent == nil || m.activeSubAgent.done {
-				m.activeSubAgent = &subAgentBlock{
-					desc:      p.AgentDesc,
-					agentType: p.AgentType,
-				}
-			}
-			m.activeSubAgent.toolUses = append(m.activeSubAgent.toolUses, toolBlockInfo{
-				toolName: p.ToolName,
-				args:     p.ToolArgs,
-				elapsed:  p.Elapsed,
-				isError:  p.IsError,
-			})
-		}
+		m.applySubAgentProgress(msg.progress)
 		m.updateViewport()
 		return m, m.listenForSubAgentProgress()
 
@@ -417,9 +402,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.defaultTools.EditFile.FileHistory = m.fileHistory
 		m.defaultTools.WriteFile.FileHistory = m.fileHistory
 		m.registerAgentTools(client, p, p.Protocol, wd)
-		// Best-effort: pull the model's context window from the provider once
-		// (Anthropic only) and cache it on p before GetContextWindow reads it.
-		// Silently degrades to the mapping table / default on any failure.
+		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic），
+		// 在 GetContextWindow 读取之前缓存到 p 上。
+		// 失败则静默降级到映射表 / 默认值。
 		llm.ResolveContextWindow(context.Background(), p)
 		ag := agent.New(client, m.registry, p.Protocol)
 		ag.ContextWindow = p.GetContextWindow()
@@ -532,9 +517,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mcpServerInfo = fmt.Sprintf("Connected to %d MCP server(s), %d tools registered", len(m.mcpConfigs)-len(msg.result.Errors), registered)
 		}
 		m.committedUpTo = len(m.chatMessages)
-		// Build MCP instructions for system prompt injection
+		// 构造要注入系统提示词的 MCP 说明
 		if len(msg.result.Servers) > 0 {
-			// Group registered tool names by server
+			// 按 server 分组已注册的工具名
 			toolsByServer := make(map[string][]string)
 			for _, t := range msg.result.Tools {
 				toolName := t.Name()
@@ -642,12 +627,12 @@ func (m *Model) drainTaskNotifications() []string {
 			messages = append(messages, msg)
 		}
 	}
-	// Teammate idle notifications land in the lead's inbox; surface
-	// them as system reminders so the Lead model sees them at the top
-	// of the next turn and can dispatch follow-up work.
+	// teammate 的空闲通知会落到 lead 的收件箱里；把它们以 system-reminder 呈现，
+	// 这样 Lead 模型在下一轮开头就能看到，
+	// 并继续派发后续工作。
 	messages = append(messages, teams.DrainLeadMailbox(m.teamMgr)...)
-	// Hook notifications (post_tool_use output, async hook results, etc.)
-	// drain into system reminders so the model sees side-effects.
+	// Hook 通知（post_tool_use 的输出、异步 hook 的结果等）
+	// 也排进 system-reminder，好让模型看到这些副作用。
 	if m.ag != nil && m.ag.Hooks != nil {
 		for _, r := range m.ag.Hooks.DrainNotifications() {
 			if r.Output == "" || r.Output == "(async)" {
@@ -659,11 +644,11 @@ func (m *Model) drainTaskNotifications() []string {
 	return messages
 }
 
-// newAgentHookRunner builds the AgentRunner closure used by `type: agent`
-// hooks. The hook prompt is sent as a single user message to the same LLM
-// the main agent uses, with no tool registry — output is the raw assistant
-// text, which lands back in the notification queue and drains into the
-// next turn's system reminders.
+// newAgentHookRunner 构造 `type: agent` hook 使用的 AgentRunner 闭包。
+// hook 的 prompt 作为单条 user 消息发给主 agent 用的同一个 LLM，
+// 不带任何工具注册表 —— 输出就是原始的 assistant 文本，
+// 它会回到通知队列里，
+// 再排进下一轮的 system-reminder。
 func newAgentHookRunner(client llm.Client) func(prompt string, ctx hooks.HookContext) (string, error) {
 	return func(prompt string, _ hooks.HookContext) (string, error) {
 		c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -702,7 +687,7 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 	teamMgr := teams.NewTeamManager()
 	m.teamMgr = teamMgr
 
-	// Wire worktree tools (T9: session restore, T13-T15: LLM tools, T17: cleanup)
+	// 接上 worktree 相关工具（T9：session 恢复，T13-T15：LLM 工具，T17：清理）
 	gitRoot := worktree.FindCanonicalGitRoot(wd)
 	m.registry.Register(&tools.EnterWorktreeTool{
 		SessionID: m.sessionID,
@@ -712,7 +697,7 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 		RepoRoot: gitRoot,
 	})
 
-	// Restore worktree session from previous crash (T9)
+	// 从上次崩溃中恢复 worktree session（T9）
 	if gitRoot != "" {
 		if savedSession, err := worktree.LoadWorktreeSession(gitRoot); err == nil && savedSession != nil {
 			if info, err := os.Stat(savedSession.WorktreePath); err == nil && info.IsDir() {
@@ -721,7 +706,7 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 		}
 	}
 
-	// Start background stale worktree cleanup (T17)
+	// 启动后台清理过期 worktree（T17）
 	worktree.StartCleanupLoop(context.Background())
 
 	m.registry.Register(&tools.ExitPlanModeTool{
@@ -751,14 +736,13 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 		ModelResolver: llm.NewModelResolver(*providerCfg),
 		Registry:      m.registry,
 		Protocol:      protocol,
-		TaskMgr:       m.taskMgr,
 		ProgressCh:    m.subAgentProgressCh,
 		Loader:        loader,
 		Conversation:  m.conversation,
 		TeamMgr:       teamMgr,
 		ForkDisabled:  m.ForkDisabled,
-		// ParentChecker is wired below once m.ag.Checker is constructed —
-		// registerAgentTools runs before the main agent's Checker is set.
+		// ParentChecker 在下面 m.ag.Checker 构造好之后再接上 ——
+		// registerAgentTools 跑在主 agent 的 Checker 设置之前。
 	})
 
 }
@@ -803,15 +787,15 @@ func (m *Model) loadSkillsAndBuildPrompt(wd string) string {
 	return m.rebuildSystemPrompt(wd)
 }
 
-// wireSkillsToAgent finishes the Skill bring-up that loadSkillsAndBuildPrompt
-// can't do because the Agent isn't constructed yet: registers per-Skill
-// slash commands (inline vs fork-mode dispatch differs) and installs
-// LoadSkillTool. Must be called immediately after m.ag is assigned and
-// before the first user input is processed.
+// wireSkillsToAgent 完成 loadSkillsAndBuildPrompt 做不了的那部分 Skill 初始化工作 ——
+// 做不了的那部分 Skill 初始化工作（因为那时
+// Agent 还没构造出来）：注册每个 Skill 的斜杠命令
+// （inline 与 fork 模式的派发方式不同）并安装 LoadSkillTool。
+// 必须在 m.ag 赋值之后、第一条用户输入被处理之前立刻调用。
 //
-// Idempotent: silently skips a slash-command name that's already taken,
-// matching the LoadUserCommands precedence in loadSkillsAndBuildPrompt and
-// honoring the project rule "don't change the existing command set".
+// 幂等：已占用的斜杠命令名会静默跳过，与
+// loadSkillsAndBuildPrompt 里 LoadUserCommands 的优先级保持一致，
+// 并遵守「不要改动已有命令集合」这条项目约定。
 func (m *Model) wireSkillsToAgent() {
 	if m.skillCatalog == nil || m.ag == nil {
 		return
@@ -834,15 +818,15 @@ func (m *Model) wireSkillsToAgent() {
 	})
 }
 
-// registerSkillCommand wires a single skill's slash command. Inline skills
-// route through TypePrompt + skills.RunInline so the SOP gets pinned and
-// allowed_tools filtering kicks in. Fork skills route through TypeSkillFork
-// so the dispatcher can offload to a goroutine + sub-agent.
+// registerSkillCommand 接上单个 skill 的斜杠命令。inline skill 走
+// TypePrompt + skills.RunInline，这样 SOP 会被钉住，
+// allowed_tools 过滤也会生效。fork skill 走
+// TypeSkillFork，派发器就能把活丢给 goroutine + sub-agent。
 //
-// Idempotent: returns silently if the command name is already taken.
-// Extracted from wireSkillsToAgent so InstallSkillTool's OnInstalled hook
-// can re-register a single newly-fetched skill without re-running the full
-// startup loop.
+// 幂等：命令名已被占用时直接静默返回。
+// 从 wireSkillsToAgent 里抽出来，是为了让 InstallSkillTool 的 OnInstalled 钩子
+// 能单独重新注册一个刚拉取到的 skill，
+// 而不用把整个启动流程再跑一遍。
 func (m *Model) registerSkillCommand(name string) {
 	if m.skillCatalog == nil || m.cmdRegistry == nil {
 		return
@@ -861,10 +845,10 @@ func (m *Model) registerSkillCommand(name string) {
 	if meta.Meta.IsFork() {
 		cmd.Type = commands.TypeSkillFork
 		cmd.Handler = func(ctx *commands.Context) string {
-			// Handler is unused for fork dispatch — executeCommand
-			// branches on TypeSkillFork before calling Handler. Keep
-			// it non-nil so legacy code paths that gate on Handler
-			// presence still work.
+			// fork 派发用不到 Handler —— executeCommand
+			// 在调用 Handler 之前就按 TypeSkillFork 分支了。这里保持
+			// 它非 nil，好让那些以 Handler 是否存在为判断条件的
+			// 老代码路径仍然能跑。
 			return ""
 		}
 	} else {
@@ -888,8 +872,8 @@ func (m *Model) registerSkillCommand(name string) {
 	m.cmdRegistry.Register(cmd)
 }
 
-// refreshSkillsIfNeeded checks whether the skill directories have changed
-// since the catalog was last loaded. If so, it reloads the catalog and
+// refreshSkillsIfNeeded 检查 skill 目录自上次加载 catalog 以来是否变过。
+// 变过就重新加载 catalog，并注册新增的斜杠命令。
 // registers any new slash commands. 系统提示词不动：新增的 Skill 会由
 // skillDelta 在下一轮以 system-reminder 补进对话，改系统提示词会让整段
 // 缓存前缀失效。
@@ -950,9 +934,9 @@ func (m *Model) rebuildSystemPrompt(wd string) string {
 	return prompt.BuildSystemPrompt(env, prompt.BuildOptions{})
 }
 
-// buildSkillSection generates the "## Available Skills" prompt section from
-// the current catalog. Extracted from loadSkillsAndBuildPrompt so it can be
-// reused by rebuildSystemPrompt.
+// buildSkillSection 根据当前 catalog 生成 "## Available Skills" 这段提示词。
+// 从 loadSkillsAndBuildPrompt 里抽出来，
+// 好让 rebuildSystemPrompt 也能复用。
 func (m *Model) buildSkillSection(wd string) string {
 	if m.skillCatalog == nil {
 		return ""
@@ -978,18 +962,18 @@ func (m *Model) buildSkillSection(wd string) string {
 	return sb.String()
 }
 
-// ----- SkillForkHost implementation on *Model -----
+// ----- *Model 上的 SkillForkHost 实现 -----
 
-// ActivateSkill delegates to the underlying Agent so RunInline can pin the
-// SOP to env context. Safe to call before m.ag exists (no-op).
+// ActivateSkill 委托给底层的 Agent，好让 RunInline 能把
+// SOP 钉到 env context。在 m.ag 存在之前调用也安全（空操作）。
 func (m Model) ActivateSkill(name, body string) {
 	if m.ag != nil {
 		m.ag.ActivateSkill(name, body)
 	}
 }
 
-// SetToolFilter installs a tool visibility filter on the Agent (used by
-// Teams coordinator mode). Passing nil clears the filter.
+// SetToolFilter 给 Agent 装一个工具可见性过滤器（Teams 的
+// Coordinator 模式会用到）。传 nil 就是清掉过滤器。
 func (m Model) SetToolFilter(allow func(name string) bool) {
 	if m.ag == nil {
 		return
@@ -997,15 +981,15 @@ func (m Model) SetToolFilter(allow func(name string) bool) {
 	m.ag.SetToolFilter(allow)
 }
 
-// ToolRegistry exposes the live registry for fail-fast checks and
-// directory-type tool registration.
+// ToolRegistry 把当前的 registry 暴露出去，用于 fail-fast 检查
+// 和 directory 类型工具的注册。
 func (m Model) ToolRegistry() *tools.Registry {
 	return m.registry
 }
 
-// SnapshotParentMessages copies the current main-conversation message log so
-// the fork executor can seed the sub-agent per fork_context. Returns a
-// shallow copy; callers must not mutate the slice.
+// SnapshotParentMessages 拷贝当前主对话的消息记录，好让 fork 执行器
+// 按 fork_context 给 sub-agent 做种子。返回的是
+// 浅拷贝；调用方不能改动这个切片。
 func (m Model) SnapshotParentMessages() []conversation.Message {
 	if m.conversation == nil {
 		return nil
@@ -1016,15 +1000,15 @@ func (m Model) SnapshotParentMessages() []conversation.Message {
 	return out
 }
 
-// RunSubAgent runs `body` as the first user message in an isolated
-// sub-agent. The sub-agent gets a filtered registry honoring allowedTools
-// (system tools always pass) and the same LLM client / protocol as the
-// main loop. Blocks until the sub-agent reaches LoopComplete or errors;
-// returns the final assistant text.
+// RunSubAgent 把 `body` 作为第一条 user 消息，在一个隔离的
+// sub-agent 里跑起来。这个 sub-agent 拿到的是按 allowedTools 过滤过的
+// registry（系统工具永远放行），以及和主循环相同的 LLM client / protocol。
+// 会阻塞到 sub-agent 到达 LoopComplete 或出错为止；
+// 返回最终的 assistant 文本。
 //
-// Caller is expected to dispatch this on a goroutine (via tea.Cmd) — the
-// channel drain here is synchronous and will freeze the UI if invoked on
-// the bubbletea Update path.
+// 调用方应当把它丢到 goroutine 上（通过 tea.Cmd）——
+// 这里的 channel 读取是同步的，如果在 bubbletea 的
+// Update 路径上调用，界面会卡死。
 func (m Model) RunSubAgent(ctx context.Context, body string, seed []conversation.Message, _ string) (string, error) {
 	if m.client == nil {
 		return "", fmt.Errorf("RunSubAgent: no llm client (provider not selected)")
@@ -1065,10 +1049,10 @@ func (m *Model) loadCustomInstructions(wd string) string {
 	return memory.LoadInstructions(wd)
 }
 
-// installMemoryExtractor wires ch09 background memory extraction onto the
-// given agent. Constructs an Extractor with the current TUI context and
-// hooks it onto ag.OnLoopComplete. Returns the Extractor so the caller
-// can store it on Model.memoryExtractor for later Drain.
+// installMemoryExtractor 把 ch09 的后台记忆抽取接到给定的 agent 上。
+// 用当前 TUI 的上下文构造一个 Extractor，
+// 挂到 ag.OnLoopComplete 上。返回这个 Extractor，好让调用方
+// 存到 Model.memoryExtractor 上，之后好做 Drain。
 func (m *Model) installMemoryExtractor(ag *agent.Agent, wd, protocol string) *extractor.Extractor {
 	if m.client == nil || m.conversation == nil {
 		return nil
@@ -1105,13 +1089,13 @@ func (m *Model) installMemoryExtractor(ag *agent.Agent, wd, protocol string) *ex
 	return extr
 }
 
-// prefetchRelevantMemories runs the recall selector in a goroutine and
-// returns a channel that will receive the rendered system-reminder plus
-// the selected memory paths (empty if nothing was selected / selector
-// timed out). The agent loop reads it at most once, without blocking.
+// prefetchRelevantMemories 在 goroutine 里跑 recall 选择器，
+// 返回一个 channel，里面会收到渲染好的 system-reminder
+// 以及选中的记忆路径（没选中任何东西 / 选择器超时就是空的）。
+// agent loop 最多读一次，且不阻塞。
 //
-// Fires a fresh side-query llm.Client per call so the selector's
-// SYSTEM prompt is independent of the main conversation's system prompt.
+// 每次调用都新起一个 side-query 用的 llm.Client，好让选择器的
+// SYSTEM prompt 独立于主对话的系统提示词。
 func (m *Model) prefetchRelevantMemories(query string) <-chan agent.RecallResult {
 	out := make(chan agent.RecallResult, 1)
 	if m.memoryMgr == nil || m.selectedProvider == nil {
@@ -1167,10 +1151,10 @@ func (m *Model) prefetchRelevantMemories(query string) <-chan agent.RecallResult
 	return out
 }
 
-// renderRelevantMemoriesReminder formats up to 5 recalled memory files
-// as a single system-reminder body. Each memory gets a freshness header
-// (today / N days ago) and its file content inline. Files that fail to
-// read are silently skipped.
+// renderRelevantMemoriesReminder 把最多 5 条召回的记忆文件
+// 格式化成一段 system-reminder 正文。每条记忆带一个新鲜度标题
+// （今天 / N 天前），后面紧跟文件内容。
+// 读失败的文件直接静默跳过。
 func renderRelevantMemoriesReminder(memories []memory.RelevantMemory) string {
 	if len(memories) == 0 {
 		return ""
@@ -1269,9 +1253,9 @@ func (m Model) handleProviderSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.defaultTools.EditFile.FileHistory = m.fileHistory
 		m.defaultTools.WriteFile.FileHistory = m.fileHistory
 		m.registerAgentTools(client, p, p.Protocol, wd)
-		// Best-effort: pull the model's context window from the provider once
-		// (Anthropic only) and cache it on p before GetContextWindow reads it.
-		// Silently degrades to the mapping table / default on any failure.
+		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic），
+		// 在 GetContextWindow 读取之前缓存到 p 上。
+		// 失败则静默降级到映射表 / 默认值。
 		llm.ResolveContextWindow(context.Background(), p)
 		ag := agent.New(client, m.registry, p.Protocol)
 		ag.ContextWindow = p.GetContextWindow()
@@ -1324,9 +1308,9 @@ func (m Model) handleProviderSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.wireSkillsToAgent()
 		m.memoryExtractor = m.installMemoryExtractor(ag, wd, p.Protocol)
 		m.historyEntries = history.Load(wd)
-		// NOTE: keep m.sessionID == the id wired into ag (SetSessionID) and into
-		// m.fileHistory above; do NOT mint a fresh id here, or compact boundaries
-		// would land in a different session file than the one the TUI appends to.
+		// NOTE：m.sessionID 必须和上面接进 ag（SetSessionID）以及 m.fileHistory 的
+		// 那个 id 保持一致；这里不要另起一个新 id，
+		// 否则 compact 的边界会写进另一个 session 文件，而不是 TUI 正在追加的那个。
 		m.state = stateChat
 		m.textarea.Focus()
 		m.updateViewport()
@@ -1352,7 +1336,7 @@ func (m Model) handleChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSandboxDialog(msg)
 	}
 
-	// ctrl+o: toggle expand/collapse on ALL collapsible blocks
+	// ctrl+o：展开/收起所有可折叠的块
 	if msg.String() == "ctrl+o" {
 		toggled := false
 		for i := range m.chatMessages {
@@ -1368,7 +1352,7 @@ func (m Model) handleChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// ESC during streaming: adopt running sub-agent to background
+	// 流式输出过程中按 ESC：把正在跑的 sub-agent 转到后台
 	if msg.String() == "escape" && m.streaming && m.agentCh != nil && m.cancelStream != nil {
 		if m.taskMgr != nil {
 			taskID := m.taskMgr.AdoptRunning("manual-background", m.agentCh, m.cancelStream)
@@ -1403,7 +1387,7 @@ func (m Model) handleChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter", "tab":
 			if m.atCursor < len(m.atMatches) {
 				selected := m.atMatches[m.atCursor]
-				// Replace @prefix with @filepath
+				// 把 @前缀 替换成 @文件路径
 				text := m.textarea.Value()
 				atIdx := strings.LastIndex(text, "@")
 				if atIdx >= 0 {
@@ -1903,15 +1887,15 @@ func (m Model) executeCommand(name, args string) (tea.Model, tea.Cmd) {
 		}
 
 	case commands.TypeSkillFork:
-		// Fork-mode skill: run the skill in an isolated sub-agent, show a
-		// progress notice in the main chat, and inject the final assistant
-		// text once the sub-agent reports back. Off-thread so the TUI
-		// stays responsive while the sub-agent thinks.
+		// fork 模式的 skill：在一个隔离的 sub-agent 里跑这个 skill，在主聊天区
+		// 显示一条进度提示，等 sub-agent 回来后再把最终的 assistant
+		// 文本注入进去。放到主线程之外，这样 sub-agent 思考时
+		// TUI 还能保持响应。
 		//
-		// The two header lines (user echo + "Forking…" notice) get committed
-		// to terminal scrollback via tea.Println the same way sendMessage
-		// commits its userLine — without this the viewport keeps growing
-		// during the sub-agent run and pushes earlier history above the fold.
+		// 开头两行（用户回显 + "Forking…" 提示）通过 tea.Println 提交到终端
+		// 回滚区，跟 sendMessage 提交 userLine 的方式一样 ——
+		// 不这么做的话，sub-agent 运行期间 viewport 会一直变长，
+		// 把更早的历史顶到屏幕外。
 		displayText := "/" + name
 		if args != "" {
 			displayText += " " + args
@@ -2044,13 +2028,13 @@ func (m Model) executePlanApproval() (tea.Model, tea.Cmd) {
 
 	var modeMsg string
 	switch m.planApprovalCursor {
-	case 0: // YOLO mode
+	case 0: // YOLO 模式
 		if m.ag != nil && m.ag.Checker != nil {
 			m.ag.Checker.Mode = permissions.ModeBypass
 			m.ag.Checker.PlanFilePath = ""
 		}
 		modeMsg = "Plan approved. Entered YOLO mode (all operations auto-approved)."
-	case 1: // Manually approve
+	case 1: // 手动逐条确认
 		if m.ag != nil && m.ag.Checker != nil {
 			restoreMode := m.prePlanMode
 			if restoreMode == "" {
@@ -2067,7 +2051,7 @@ func (m Model) executePlanApproval() (tea.Model, tea.Cmd) {
 		content: modeMsg,
 	})
 
-	// Load the plan and send it as context for the agent to start executing
+	// 读取计划并作为上下文发给 agent，让它开始执行
 	planPath := planfile.GetPlanFilePath(wd)
 	planContent, _ := planfile.LoadPlan(wd)
 	planExists := planfile.PlanExists(wd)
@@ -2282,7 +2266,7 @@ func (m Model) renderSandboxDialog() string {
 func (m Model) handleAskUserDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	multiQuestion := len(m.askUserQuestions) > 1
 
-	// Submit tab handling
+	// 处理 Submit 标签页
 	if m.askUserOnSubmit {
 		switch msg.String() {
 		case "up", "k":
@@ -2446,7 +2430,7 @@ func (m Model) renderAskUserDialog() string {
 	var sb strings.Builder
 	multiQuestion := len(m.askUserQuestions) > 1
 
-	// Navigation bar (only for multi-question)
+	// 导航栏（只有多问题时才有）
 	if multiQuestion {
 		sb.WriteString(m.renderQuestionNavBar())
 		sb.WriteString("\n\n")
@@ -2458,7 +2442,7 @@ func (m Model) renderAskUserDialog() string {
 		sb.WriteString(m.renderQuestionView())
 	}
 
-	// Bottom hint
+	// 底部提示
 	if multiQuestion && !m.askUserOnSubmit {
 		hint := lipgloss.NewStyle().Foreground(dimText).Render("      ← → navigate questions · enter to confirm")
 		sb.WriteString(hint)
@@ -2475,14 +2459,14 @@ func (m Model) renderQuestionNavBar() string {
 	dimArrow := lipgloss.NewStyle().Foreground(dimText)
 	brightArrow := lipgloss.NewStyle().Foreground(brandPurple).Bold(true)
 
-	// Left arrow
+	// 左箭头
 	if m.askUserQIdx == 0 && !m.askUserOnSubmit {
 		sb.WriteString(dimArrow.Render(" ←"))
 	} else {
 		sb.WriteString(brightArrow.Render(" ←"))
 	}
 
-	// Question tabs
+	// 问题标签页
 	for i, q := range m.askUserQuestions {
 		header := q.Header
 		if header == "" {
@@ -2502,7 +2486,7 @@ func (m Model) renderQuestionNavBar() string {
 		}
 	}
 
-	// Submit tab
+	// Submit 标签页
 	submitLabel := "✓ Submit"
 	if m.askUserOnSubmit {
 		sb.WriteString(activeTab.Render(submitLabel))
@@ -2510,7 +2494,7 @@ func (m Model) renderQuestionNavBar() string {
 		sb.WriteString(inactiveTab.Render(submitLabel))
 	}
 
-	// Right arrow
+	// 右箭头
 	if m.askUserOnSubmit {
 		sb.WriteString(dimArrow.Render(" →"))
 	} else {
@@ -2523,9 +2507,9 @@ func (m Model) renderQuestionNavBar() string {
 func (m Model) askUserMaxLines() int {
 	maxLines := 0
 	for _, q := range m.askUserQuestions {
-		lines := 2 + len(q.Options) + 1 // header + blank + options + Other
+		lines := 2 + len(q.Options) + 1 // 标题 + 空行 + 选项 + Other
 		if q.MultiSelect {
-			lines++ // "space to toggle" hint
+			lines++ // "space to toggle" 提示行
 		}
 		if lines > maxLines {
 			maxLines = lines
@@ -2566,7 +2550,7 @@ func (m Model) renderQuestionView() string {
 		lines++
 	}
 
-	// "Other" option
+	// "Other" 选项
 	otherIdx := len(q.Options)
 	prefix := "   "
 	if cursor == otherIdx {
@@ -2592,7 +2576,7 @@ func (m Model) renderQuestionView() string {
 		lines++
 	}
 
-	// Pad to fixed height so switching questions doesn't cause layout shift
+	// 补齐到固定高度，这样切换问题时不会导致布局跳动
 	if len(m.askUserQuestions) > 1 {
 		target := m.askUserMaxLines()
 		for lines < target {
@@ -2630,7 +2614,7 @@ func (m Model) renderSubmitView() string {
 	sb.WriteString("\n")
 	lines++
 
-	// Submit / Cancel options
+	// Submit / Cancel 两个选项
 	for i, opt := range []string{"Submit answers", "Cancel"} {
 		if i == m.askUserSubmitIdx {
 			prefix := lipgloss.NewStyle().Foreground(brandPurple).Render(" ❯ ")
@@ -2642,7 +2626,7 @@ func (m Model) renderSubmitView() string {
 		lines++
 	}
 
-	// Pad to match question view height
+	// 补齐到和问题视图一样的高度
 	target := m.askUserMaxLines()
 	for lines < target {
 		sb.WriteString("\n")
@@ -2776,30 +2760,54 @@ func (m *Model) drainSubAgentProgress() {
 	for {
 		select {
 		case p := <-m.subAgentProgressCh:
-			if p.Done {
-				if m.activeSubAgent != nil {
-					m.activeSubAgent.done = true
-					m.activeSubAgent.toolCount = p.ToolCount
-					m.activeSubAgent.totalTime = p.TotalTime
-				}
-			} else {
-				if m.activeSubAgent == nil || m.activeSubAgent.done {
-					m.activeSubAgent = &subAgentBlock{
-						desc:      p.AgentDesc,
-						agentType: p.AgentType,
-					}
-				}
-				m.activeSubAgent.toolUses = append(m.activeSubAgent.toolUses, toolBlockInfo{
-					toolName: p.ToolName,
-					args:     p.ToolArgs,
-					elapsed:  p.Elapsed,
-					isError:  p.IsError,
-				})
-			}
+			m.applySubAgentProgress(p)
 		default:
 			return
 		}
 	}
+}
+
+// applySubAgentProgress 把一个进度事件落到对应的活动块上。并发 fan-out 时同一
+// 轮有多个块，AgentID 是路由键；AgentID 为空（旧调用方）时退回 AgentDesc 匹配，
+// 都匹配不上就新建一个块。
+func (m *Model) applySubAgentProgress(p agents.SubAgentProgress) {
+	sab := m.findSubAgentBlock(p)
+	if sab == nil {
+		sab = &subAgentBlock{
+			agentID:   p.AgentID,
+			desc:      p.AgentDesc,
+			agentType: p.AgentType,
+		}
+		m.activeSubAgents = append(m.activeSubAgents, sab)
+	}
+	if p.Done {
+		sab.done = true
+		sab.toolCount = p.ToolCount
+		sab.totalTime = p.TotalTime
+		return
+	}
+	// 已完成块收到迟到的事件（不该发生）时不再追加，避免污染统计。
+	if sab.done {
+		return
+	}
+	sab.toolUses = append(sab.toolUses, toolBlockInfo{
+		toolName: p.ToolName,
+		args:     p.ToolArgs,
+		elapsed:  p.Elapsed,
+		isError:  p.IsError,
+	})
+}
+
+func (m *Model) findSubAgentBlock(p agents.SubAgentProgress) *subAgentBlock {
+	for _, sab := range m.activeSubAgents {
+		if p.AgentID != "" && sab.agentID == p.AgentID {
+			return sab
+		}
+		if p.AgentID == "" && sab.desc == p.AgentDesc {
+			return sab
+		}
+	}
+	return nil
 }
 
 func (m Model) listenForSubAgentProgress() tea.Cmd {
@@ -2887,7 +2895,7 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 				m.toolBlocks[i].elapsed = e.Elapsed.Seconds()
 				m.toolBlocks[i].loading = false
 				m.toolBlocks[i].collapsed = true
-				// Agent tools defer to TurnComplete so we can merge sub-agent progress.
+				// Agent 工具推迟到 TurnComplete 再处理，好把 sub-agent 的进度合并进来。
 				if m.toolBlocks[i].toolName != "Agent" {
 					tb := m.toolBlocks[i]
 					emitted = &tb
@@ -2897,8 +2905,8 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 			}
 		}
 		if emitted != nil {
-			// Flush pending assistant text first so order matches MewCode's
-			// per-block stream: text → tool result → text → tool result.
+			// 先把攒着的 assistant 文本刷出去，好让顺序和 MewCode
+			// 按块流式输出的顺序一致：文本 → 工具结果 → 文本 → 工具结果。
 			if m.streamBuf != "" {
 				m.chatMessages = append(m.chatMessages, chatMessage{
 					role:    "assistant",
@@ -2925,57 +2933,61 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 			m.chatMessages = append(m.chatMessages, chatMessage{role: "assistant", content: m.streamBuf})
 			m.streamBuf = ""
 		}
-		// Drain any buffered sub-agent progress events
+		// 排空所有缓冲起来的 sub-agent 进度事件
 		m.drainSubAgentProgress()
+		// 收尾本轮所有 sub-agent 活动块。fan-out 时同一轮可能有多个（各自对应一个
+		// Agent 工具调用），逐个落成独立的 sub_agent 消息；同时记下已产出的 desc，
+		// 供下面给缺进度的 Agent 工具补占位块时去重。
+		emitted := map[string]int{}
+		for _, sab := range m.activeSubAgents {
+			s := *sab
+			if !s.done {
+				s.done = true
+				s.toolCount = len(s.toolUses)
+				var total float64
+				for _, tu := range s.toolUses {
+					total += tu.elapsed
+				}
+				s.totalTime = total
+			}
+			m.chatMessages = append(m.chatMessages, chatMessage{
+				role:          "sub_agent",
+				subAgentBlock: &s,
+				expanded:      false,
+			})
+			emitted[s.desc]++
+		}
+		m.activeSubAgents = nil
 		if len(m.toolBlocks) > 0 {
 			var nonAgentTools []toolBlockInfo
 			for _, tb := range m.toolBlocks {
-				if tb.toolName == "Agent" && m.activeSubAgent != nil && len(m.activeSubAgent.toolUses) > 0 {
-					// Finalize sub-agent block using collected progress
-					sab := *m.activeSubAgent
-					if !sab.done {
-						sab.done = true
-						sab.toolCount = len(sab.toolUses)
-						var total float64
-						for _, tu := range sab.toolUses {
-							total += tu.elapsed
-						}
-						sab.totalTime = total
-					}
-					m.chatMessages = append(m.chatMessages, chatMessage{
-						role:          "sub_agent",
-						subAgentBlock: &sab,
-						expanded:      false,
-					})
-					m.activeSubAgent = nil
-				} else if tb.toolName == "Agent" {
-					// Agent tool ran but no progress collected — extract info from result
-					desc := ""
-					if d, ok := tb.args["description"].(string); ok {
-						desc = d
-					}
-					agentType := "general-purpose"
-					if at, ok := tb.args["subagent_type"].(string); ok {
-						agentType = at
-					}
-					sab := &subAgentBlock{
+				if tb.toolName != "Agent" {
+					nonAgentTools = append(nonAgentTools, tb)
+					continue
+				}
+				desc, _ := tb.args["description"].(string)
+				if emitted[desc] > 0 {
+					// 这个 Agent 工具已经有进度块了
+					emitted[desc]--
+					continue
+				}
+				// Agent 工具跑过了但没收集到进度 —— 从调用参数里提取信息补一个占位块
+				agentType := "general-purpose"
+				if at, ok := tb.args["subagent_type"].(string); ok && at != "" {
+					agentType = at
+				}
+				m.chatMessages = append(m.chatMessages, chatMessage{
+					role: "sub_agent",
+					subAgentBlock: &subAgentBlock{
 						desc:      desc,
 						agentType: agentType,
 						done:      true,
 						totalTime: tb.elapsed,
-						toolCount: 0,
-					}
-					m.chatMessages = append(m.chatMessages, chatMessage{
-						role:          "sub_agent",
-						subAgentBlock: sab,
-						expanded:      false,
-					})
-					m.activeSubAgent = nil
-				} else {
-					nonAgentTools = append(nonAgentTools, tb)
-				}
+					},
+					expanded: false,
+				})
 			}
-			// Classify non-agent tools: visible (write/command) vs collapsed (read)
+			// 给非 Agent 工具分类：可见（写/命令）还是折叠（读）
 			var visibleTools, collapsedTools []toolBlockInfo
 			for _, tb := range nonAgentTools {
 				if isCollapsibleTool(tb.toolName) {
@@ -2984,7 +2996,7 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 					visibleTools = append(visibleTools, tb)
 				}
 			}
-			// Visible tools: show each as individual line
+			// 可见工具：每个单独占一行
 			for _, tb := range visibleTools {
 				m.chatMessages = append(m.chatMessages, chatMessage{
 					role:      "tool_visible",
@@ -2992,7 +3004,7 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 					toolGroup: []toolBlockInfo{tb},
 				})
 			}
-			// Collapsed reads: hidden by default, shown on ctrl+o
+			// 折叠的读操作：默认隐藏，按 ctrl+o 才显示
 			if len(collapsedTools) > 0 {
 				m.chatMessages = append(m.chatMessages, chatMessage{
 					role:      "tool_collapsed",
@@ -3002,7 +3014,6 @@ func (m Model) handleAgentEvent(ev agent.AgentEvent) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.toolBlocks = nil
-		m.activeSubAgent = nil
 		m.updateViewport()
 
 	case agent.UsageEvent:
@@ -3237,7 +3248,7 @@ func (m *Model) updateViewport() {
 	}
 }
 
-// ── View ──
+// ── 视图 ──
 
 func (m Model) View() string {
 	if !m.ready {
@@ -3294,7 +3305,7 @@ func (m Model) renderTeammateTree() string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 
-	// Leader line
+	// Leader 那一行
 	sb.WriteString("  ┌─ ")
 	sb.WriteString(cyanStyle.Render("team-lead"))
 	sb.WriteString(": ")
@@ -3304,7 +3315,7 @@ func (m Model) renderTeammateTree() string {
 	}
 	sb.WriteString("\n")
 
-	// Teammate lines
+	// teammate 各行
 	for i, p := range progressList {
 		isLast := i == len(progressList)-1
 		connector := "  ├─ "
@@ -3375,7 +3386,7 @@ func (m Model) renderChatView() string {
 	sb.WriteString(m.renderSeparator())
 	sb.WriteString("\n")
 	if m.planApprovalDialog {
-		// Hide input when plan approval dialog is active
+		// 计划审批对话框打开时隐藏输入框
 		sb.WriteString(lipgloss.NewStyle().Foreground(dimText).Render("  Select an option above..."))
 	} else {
 		sb.WriteString(promptStyle.Render("❯ "))
@@ -3551,7 +3562,7 @@ func (m Model) renderChatContent() string {
 					sb.WriteString("\n")
 				}
 			}
-			// Hidden when collapsed — no output
+			// 折叠状态下隐藏 —— 不输出任何内容
 
 		case "tool_group":
 			if msg.expanded {
@@ -3591,21 +3602,23 @@ func (m Model) renderChatContent() string {
 		}
 	}
 
-	// Active sub-agent progress (live)
-	if m.activeSubAgent != nil && !m.activeSubAgent.done {
-		sb.WriteString(renderSubAgentBlock(m.activeSubAgent, false))
+	// 进行中的 sub-agent 进度（实时）。fan-out 时同一轮可能有多个，逐个渲染。
+	for _, sab := range m.activeSubAgents {
+		if !sab.done {
+			sb.WriteString(renderSubAgentBlock(sab, false))
+		}
 	}
 
-	// Active tool blocks
+	// 进行中的工具块
 	for _, tb := range m.toolBlocks {
-		if tb.toolName == "Agent" && m.activeSubAgent != nil {
-			continue // rendered above as sub-agent block
+		if tb.toolName == "Agent" && len(m.activeSubAgents) > 0 {
+			continue // 上面已经作为 sub-agent 块渲染过了
 		}
 		sb.WriteString(m.renderToolBlock(tb))
 		sb.WriteString("\n")
 	}
 
-	// Streaming text
+	// 流式输出的文本
 	if m.streaming && m.streamBuf != "" {
 		sb.WriteString(aiMarkerStyle.Render("● "))
 		indented := indentBlock(m.streamBuf, "  ")
@@ -3613,7 +3626,7 @@ func (m Model) renderChatContent() string {
 		sb.WriteString("\n")
 	}
 
-	// Spinner — always last while agent is running
+	// Spinner —— agent 运行期间始终放在最后
 	if m.streaming {
 		elapsed := time.Since(m.thinkingStart).Seconds()
 		sb.WriteString("\n")
@@ -3621,11 +3634,11 @@ func (m Model) renderChatContent() string {
 			fmt.Sprintf("  %s %s…  (%.0fs)", m.spinner.View(), m.thinkingVerb, elapsed),
 		))
 		sb.WriteString("\n")
-		// Teammate progress tree
+		// teammate 进度树
 		sb.WriteString(m.renderTeammateTree())
 	}
 
-	// Show teammate tree even when not streaming (teammates may still be running)
+	// 即使不在流式输出也显示 teammate 树（teammate 可能还在跑）
 	if !m.streaming {
 		tree := m.renderTeammateTree()
 		if tree != "" {
@@ -3661,8 +3674,8 @@ func (m Model) renderMessagesRange(from, to int) string {
 			sb.WriteString("\n")
 			appendEditDiff(&sb, msg.toolGroup)
 		case "tool_collapsed":
-			// Scrollback can't be re-expanded later, so always render each
-			// tool inline (with name + args) instead of collapsing the group.
+			// 回滚区里的内容之后没法再展开，所以始终逐个内联渲染
+			// 每个工具（带上名字 + 参数），而不是把整组折叠起来。
 			for _, tb := range msg.toolGroup {
 				sb.WriteString("  ")
 				text := renderToolBlockText(tb)
@@ -3743,24 +3756,24 @@ func (m Model) renderAtMenu() string {
 func (m Model) renderPermDialog() string {
 	var sb strings.Builder
 
-	// Command header
+	// 命令标题
 	sb.WriteString(permBorderStyle.Render(fmt.Sprintf("  %s command", m.permToolName)))
 	sb.WriteString("\n\n")
 
-	// Command detail
+	// 命令详情
 	desc := m.permDesc
 	if desc != "" {
 		sb.WriteString(lipgloss.NewStyle().Foreground(normalText).PaddingLeft(4).Render(desc))
 		sb.WriteString("\n\n")
 	}
 
-	// Approval notice
+	// 审批提示
 	sb.WriteString(permDimStyle.Render("  This command requires approval"))
 	sb.WriteString("\n\n")
 	sb.WriteString(lipgloss.NewStyle().Foreground(normalText).PaddingLeft(2).Render("Do you want to proceed?"))
 	sb.WriteString("\n")
 
-	// Selectable options
+	// 可选项
 	for i, opt := range permOptions {
 		prefix := "   "
 		style := lipgloss.NewStyle().Foreground(dimText)
@@ -3856,11 +3869,11 @@ func (m Model) renderRewindOptionsDialog() string {
 }
 
 func (m Model) renderMarkdown(content string) string {
-	// Don't use WithAutoStyle — it queries the terminal background via OSC 11
-	// every time, and the response leaks into stdin and pollutes the input.
-	// Force TrueColor explicitly: without a profile, glamour delegates to
-	// termenv auto-detection, which fails under bubbletea's stdin takeover
-	// and falls back to the no-color "notty" style — markdown then prints raw.
+	// 别用 WithAutoStyle —— 它每次都会通过 OSC 11 查询终端背景色，
+	// 返回的响应会漏进 stdin，把输入搞脏。
+	// 显式强制 TrueColor：不指定 profile 的话，glamour 会交给
+	// termenv 自动探测，而在 bubbletea 接管 stdin 的情况下会失败，
+	// 退化成无颜色的 "notty" 样式 —— markdown 就会把原始文本直接打出来。
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),
 		glamour.WithColorProfile(termenv.TrueColor),
@@ -3876,7 +3889,7 @@ func (m Model) renderMarkdown(content string) string {
 	return strings.TrimSpace(rendered)
 }
 
-// ── Helpers ──
+// ── 辅助函数 ──
 
 func toolTitle(toolName string, args map[string]any) string {
 	switch toolName {
@@ -4018,17 +4031,17 @@ func (m Model) doResumeSession(wd, targetID string, sessions []session.SessionIn
 	m.committedUpTo = 0
 	m.conversation = conversation.NewManager()
 	m.sessionID = strings.TrimSpace(targetID)
-	// Keep the Agent's session log pointer in sync with the resumed session so a
-	// later compaction writes its boundary into this same file (chained resume).
+	// 让 Agent 的 session 日志指针和恢复的 session 保持同步，这样之后
+	// 做压缩时，边界也会写进同一个文件（链式恢复）。
 	if m.ag != nil {
 		m.ag.SetSessionID(m.sessionID)
 	}
 
-	// Compaction-aware rebuild: if the session contains a compact_boundary, the
-	// live conversation is the compacted state — [summary] + kept tail + any
-	// plain messages appended after the boundary — and the original
-	// pre-compaction prefix is NOT replayed (it stays in the file for audit).
-	// Without a boundary (old sessions) we replay everything verbatim.
+	// 感知压缩的重建：如果 session 里有 compact_boundary，
+	// 那么当前有效的对话就是压缩后的状态 —— [摘要] + 保留的尾部 +
+	// 边界之后追加的所有普通消息 —— 而原始的
+	// 压缩前前缀不会重放（它留在文件里供审计）。
+	// 没有边界时（老的 session）就原样重放所有内容。
 	boundary, after, compacted := session.FindLastCompactBoundary(msgs)
 	var replay []session.Message
 	if compacted {
@@ -4174,7 +4187,7 @@ func (m Model) executeRewindOption() (tea.Model, tea.Cmd) {
 	var summary string
 
 	switch m.rewindOptionCursor {
-	case 0: // Restore code and conversation
+	case 0: // 恢复代码和对话
 		changed, err := m.fileHistory.Rewind(m.rewindCursor)
 		if err != nil {
 			m.chatMessages = append(m.chatMessages, chatMessage{role: "error", content: fmt.Sprintf("Rewind failed: %s", err)})
@@ -4191,13 +4204,13 @@ func (m Model) executeRewindOption() (tea.Model, tea.Cmd) {
 		m.chatMessages = m.chatMessages[:0]
 		m.committedUpTo = 0
 
-	case 1: // Restore conversation only
+	case 1: // 只恢复对话
 		m.conversation.TruncateTo(snap.MessageIndex)
 		summary = fmt.Sprintf("⟲ Rewound conversation to checkpoint %d. Files unchanged.", m.rewindCursor+1)
 		m.chatMessages = m.chatMessages[:0]
 		m.committedUpTo = 0
 
-	case 2: // Restore code only
+	case 2: // 只恢复代码
 		changed, err := m.fileHistory.Rewind(m.rewindCursor)
 		if err != nil {
 			m.chatMessages = append(m.chatMessages, chatMessage{role: "error", content: fmt.Sprintf("Rewind failed: %s", err)})
@@ -4211,7 +4224,7 @@ func (m Model) executeRewindOption() (tea.Model, tea.Cmd) {
 			summary += "\n  • " + f
 		}
 
-	case 3: // Never mind
+	case 3: // 算了，不恢复
 		m.rewindDialog = false
 		m.rewindPhase = 0
 		m.textarea.Focus()
@@ -4299,9 +4312,9 @@ func (m *Model) resumeFilterSessions() {
 }
 
 func (m Model) resumeVisibleCount() int {
-	// header(1) + search box(3) + project(1) + blank(1) + footer(2) = 8
+	// 标题(1) + 搜索框(3) + 项目名(1) + 空行(1) + 页脚(2) = 8
 	available := m.height - 8
-	perItem := 2 // title line + metadata line
+	perItem := 2 // 标题行 + 元信息行
 	if available < perItem {
 		return 1
 	}
@@ -4317,13 +4330,13 @@ func (m Model) renderResumeView() string {
 		current = m.resumeCursor + 1
 	}
 
-	// Header
+	// 标题
 	sb.WriteString(lipgloss.NewStyle().Foreground(dimText).PaddingLeft(2).Render(
 		fmt.Sprintf("Resume session (%d of %d)", current, total),
 	))
 	sb.WriteString("\n")
 
-	// Search box
+	// 搜索框
 	searchText := m.resumeSearch
 	if searchText == "" {
 		searchText = lipgloss.NewStyle().Foreground(dimText).Render("⌕ Search…")
@@ -4342,13 +4355,13 @@ func (m Model) renderResumeView() string {
 	sb.WriteString(lipgloss.NewStyle().PaddingLeft(2).Render(border.Render(searchText)))
 	sb.WriteString("\n")
 
-	// Project name
+	// 项目名
 	wd, _ := os.Getwd()
 	projectName := filepath.Base(wd)
 	sb.WriteString(lipgloss.NewStyle().Foreground(dimText).PaddingLeft(4).Render(projectName))
 	sb.WriteString("\n\n")
 
-	// Session list
+	// session 列表
 	maxVisible := m.resumeVisibleCount()
 	if maxVisible > total {
 		maxVisible = total
@@ -4357,7 +4370,7 @@ func (m Model) renderResumeView() string {
 	for i := m.resumeScrollTop; i < m.resumeScrollTop+maxVisible && i < total; i++ {
 		s := m.resumeFiltered[i]
 
-		// Title line
+		// 标题行
 		title := s.FirstMessage
 		if title == "" {
 			title = "(empty session)"
@@ -4377,7 +4390,7 @@ func (m Model) renderResumeView() string {
 		sb.WriteString(lipgloss.NewStyle().PaddingLeft(2).Render(prefix + title))
 		sb.WriteString("\n")
 
-		// Metadata line
+		// 元信息行
 		var meta []string
 		meta = append(meta, session.FormatRelativeTime(s.ModTime))
 		if s.GitBranch != "" {
@@ -4393,7 +4406,7 @@ func (m Model) renderResumeView() string {
 		}
 	}
 
-	// Show scroll indicator
+	// 显示滚动提示
 	if total > maxVisible {
 		if m.resumeScrollTop+maxVisible < total {
 			sb.WriteString("\n")
@@ -4403,7 +4416,7 @@ func (m Model) renderResumeView() string {
 		}
 	}
 
-	// Pad to bottom
+	// 补齐到底部
 	rendered := strings.Count(sb.String(), "\n") + 1
 	footerHeight := 2
 	pad := m.height - rendered - footerHeight
@@ -4411,7 +4424,7 @@ func (m Model) renderResumeView() string {
 		sb.WriteString(strings.Repeat("\n", pad))
 	}
 
-	// Footer
+	// 页脚
 	sb.WriteString("\n")
 	sb.WriteString(lipgloss.NewStyle().Foreground(dimText).PaddingLeft(4).Render(
 		"Type to search · Enter to select · Esc to cancel",

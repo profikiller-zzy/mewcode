@@ -67,7 +67,7 @@ func (t *ReadFileTool) Execute(_ context.Context, args map[string]any) ToolResul
 	}
 	selected := lines[offset:end]
 
-	// Record file state for read-before-edit enforcement
+	// 记录文件状态，用于强制「先读后写」
 	if t.FileStateCache != nil {
 		t.FileStateCache.Record(filePath, info.ModTime().UnixMilli())
 	}

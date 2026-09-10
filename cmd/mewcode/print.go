@@ -106,7 +106,6 @@ func runPrint(userPrompt string, cfg *config.AppConfig, hookCfgs []hooks.Hook, o
 	llm.ResolveContextWindow(context.Background(), p)
 
 	// 注册工具
-	taskMgr := agents.NewTaskManager()
 	store := todo.NewStore(wd, sessionID)
 	todoList := todo.NewTaskList(store)
 	loader := agents.NewAgentLoader(wd)
@@ -157,7 +156,6 @@ func runPrint(userPrompt string, cfg *config.AppConfig, hookCfgs []hooks.Hook, o
 		ModelResolver: llm.NewModelResolver(*p),
 		Registry:      registry,
 		Protocol:      p.Protocol,
-		TaskMgr:       taskMgr,
 		ProgressCh:    subProgressCh,
 		Loader:        loader,
 		Conversation:  conv,

@@ -15,9 +15,9 @@ import (
 	"mewcode/internal/tools"
 )
 
-// --- Mock infrastructure ---
+// --- Mock 基础设施 ---
 
-// mockClient returns scripted responses in order.
+// mockClient 按顺序返回脚本化的响应。
 type mockClient struct {
 	responses [][]llm.StreamEvent
 	callIdx   int
@@ -44,10 +44,10 @@ func (m *mockClient) Stream(ctx context.Context, conv *conversation.Manager, too
 	return ch, errCh
 }
 
-// dynamicMock inspects the conversation to decide what to respond.
-// Each handler receives the current conversation and returns events.
-// Handlers are consumed in order; within one agent.Run() call the mock
-// may be invoked multiple times (once per LLM turn in the tool-call loop).
+// dynamicMock 检查当前对话来决定该返回什么。
+// 每个 handler 拿到当前对话并返回事件。
+// handler 按顺序消费；在一次 agent.Run() 调用里，mock
+// 可能被触发多次（tool-call loop 中每个 LLM turn 一次）。
 type dynamicMock struct {
 	handlers []func(msgs []conversation.Message) []llm.StreamEvent
 	callIdx  int
@@ -76,7 +76,7 @@ func (m *dynamicMock) Stream(ctx context.Context, conv *conversation.Manager, to
 	return ch, errCh
 }
 
-// mockTool returns a fixed result.
+// mockTool 返回固定的结果。
 type mockTool struct {
 	name   string
 	result string
@@ -95,7 +95,7 @@ func (t *mockTool) Execute(ctx context.Context, args map[string]any) tools.ToolR
 	return tools.ToolResult{Output: t.result}
 }
 
-// --- Helpers ---
+// --- 辅助函数 ---
 
 func collectEvents(ch <-chan AgentEvent) []AgentEvent {
 	var events []AgentEvent
@@ -147,15 +147,15 @@ func buildSkillListing(skillsDir string, catalog *skills.Catalog) string {
 	return sb.String()
 }
 
-// runConversationRound simulates what the TUI does for one user message:
-// add user msg to conv, call agent.Run(), collect events, return text.
+// runConversationRound 模拟 TUI 处理一条用户消息的过程：
+// 把用户消息加入对话，调用 agent.Run()，收集事件，返回文本。
 func runConversationRound(ag *Agent, conv *conversation.Manager, userMsg string) (string, []AgentEvent) {
 	conv.AddUserMessage(userMsg)
 	events := collectEvents(ag.Run(context.Background(), conv))
 	return getStreamText(events), events
 }
 
-// --- Basic agent tests ---
+// --- 基础 Agent 测试 ---
 
 func TestAgentSimpleResponse(t *testing.T) {
 	client := &mockClient{responses: [][]llm.StreamEvent{{
@@ -252,15 +252,15 @@ func TestAgentWithThinking(t *testing.T) {
 	}
 }
 
-// --- Multi-round conversation tests ---
-// These simulate the real TUI flow: agent.Run() ends when LLM returns text
-// without tool calls, then the user sends a new message, and agent.Run()
-// is called again. This is how real conversations work.
+// --- 多轮对话测试 ---
+// 这里模拟真实 TUI 流程：LLM 返回不带工具调用的文本时 agent.Run() 结束，
+// 接着用户发新消息，再调用一次 agent.Run()。
+// 真实对话就是这么进行的。
 
 func TestMultiRoundConversation(t *testing.T) {
-	// Simulate: user asks → agent asks clarification → user answers → agent works → done
+	// 模拟：用户提问 → Agent 追问 → 用户回答 → Agent 干活 → 结束
 	client := &dynamicMock{handlers: []func([]conversation.Message) []llm.StreamEvent{
-		// Round 1: agent asks a clarifying question
+		// 第 1 轮：Agent 追问一个澄清问题
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			last := msgs[len(msgs)-1]
 			if !strings.Contains(last.Content, "refactor") {
@@ -271,7 +271,7 @@ func TestMultiRoundConversation(t *testing.T) {
 				llm.StreamEnd{StopReason: "end_turn"},
 			}
 		},
-		// Round 2: agent reads the file
+		// 第 2 轮：Agent 读取文件
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			last := msgs[len(msgs)-1]
 			if !strings.Contains(last.Content, "main.go") {
@@ -284,9 +284,9 @@ func TestMultiRoundConversation(t *testing.T) {
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// Round 2 continued (after tool result): agent produces final answer
+		// 第 2 轮续（拿到工具结果后）：Agent 给出最终答案
 		func(msgs []conversation.Message) []llm.StreamEvent {
-			// Verify tool result is in conversation
+			// 确认工具结果已经在对话里
 			found := false
 			for _, m := range msgs {
 				for _, tr := range m.ToolResults {
@@ -311,30 +311,30 @@ func TestMultiRoundConversation(t *testing.T) {
 	ag := New(client, reg, "anthropic")
 	conv := conversation.NewManager()
 
-	// Round 1: user asks, agent asks clarification
+	// 第 1 轮：用户提问，Agent 追问澄清
 	text1, _ := runConversationRound(ag, conv, "please refactor this code")
 	if !strings.Contains(text1, "Which file") {
 		t.Errorf("round 1: agent should ask clarification, got: %s", text1)
 	}
 	t.Logf("Round 1 agent: %s", text1)
 
-	// Round 2: user answers, agent reads file and refactors
+	// 第 2 轮：用户回答，Agent 读文件并重构
 	text2, events2 := runConversationRound(ag, conv, "main.go, extract functions please")
 	if !strings.Contains(text2, "refactored") {
 		t.Errorf("round 2: agent should produce refactored code, got: %s", text2)
 	}
 	t.Logf("Round 2 agent: %s", text2)
 
-	// Verify tool was called
+	// 确认工具被调用过
 	trs := getToolResults(events2)
 	if len(trs) != 1 || trs[0].ToolName != "ReadFile" {
 		t.Errorf("expected ReadFile tool call, got: %+v", trs)
 	}
 
-	// Verify full conversation has correct structure
+	// 确认整段对话的结构正确
 	msgs := conv.GetMessages()
 	t.Logf("Total messages in conversation: %d", len(msgs))
-	// Expected: user1, assistant1, user2, assistant2+tool, tool_result, assistant3
+	// 预期：user1、assistant1、user2、assistant2+tool、tool_result、assistant3
 	if len(msgs) < 6 {
 		t.Fatalf("expected 6+ messages, got %d", len(msgs))
 	}
@@ -346,15 +346,15 @@ func TestMultiRoundConversation(t *testing.T) {
 	}
 }
 
-// --- Skill integration tests with full agent simulation ---
+// --- 带完整 Agent 模拟的 Skill 集成测试 ---
 
 func TestFrontendDesignSkillFullSession(t *testing.T) {
-	// Simulates: user invokes /frontend-design → agent asks what to build →
-	// user says "login page" → agent creates files → verify files exist
+	// 模拟：用户调用 /frontend-design → Agent 问要做什么 →
+	// 用户说 "login page" → Agent 创建文件 → 校验文件确实存在
 
 	workDir := t.TempDir()
 
-	// Load real frontend-design skill or create a test one
+	// 加载真实的 frontend-design skill，没有就造一个测试用的
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, "frontend-design")
 	os.MkdirAll(skillDir, 0o755)
@@ -381,10 +381,10 @@ Output files directly using WriteFile.
 	outputFile := filepath.Join(workDir, "login.html")
 
 	client := &dynamicMock{handlers: []func([]conversation.Message) []llm.StreamEvent{
-		// Round 1: agent receives skill prompt, asks what to build
+		// 第 1 轮：Agent 收到 skill prompt，问要做什么
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			last := msgs[len(msgs)-1]
-			// Verify the skill prompt was injected correctly
+			// 确认 skill prompt 被正确注入
 			if !strings.Contains(last.Content, "Frontend Design Skill") {
 				t.Errorf("skill body not in user message: %s", last.Content[:min(100, len(last.Content))])
 			}
@@ -393,7 +393,7 @@ Output files directly using WriteFile.
 				llm.StreamEnd{StopReason: "end_turn"},
 			}
 		},
-		// Round 2: user says login page, agent creates file
+		// 第 2 轮：用户说 login page，Agent 创建文件
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			last := msgs[len(msgs)-1]
 			if !strings.Contains(last.Content, "login") {
@@ -438,7 +438,7 @@ Output files directly using WriteFile.
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// Round 2 continued: after file write, agent confirms
+		// 第 2 轮续：写完文件后 Agent 给出确认
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: fmt.Sprintf("Done! I created `%s` with:\n- Clean semantic HTML\n- Responsive card layout\n- Accessible form fields with ARIA labels\n- Modern CSS with custom properties\n\nOpen it in your browser to see the result.", outputFile)},
@@ -447,14 +447,14 @@ Output files directly using WriteFile.
 		},
 	}}
 
-	// Use real WriteFile tool so we can verify the file is actually created
+	// 用真实的 WriteFile 工具，这样才能验证文件确实被创建出来
 	reg := tools.NewRegistry()
 	reg.Register(&tools.WriteFileTool{})
 
 	ag := New(client, reg, "anthropic")
 	conv := conversation.NewManager()
 
-	// Round 1: invoke skill (this is what TUI does when user types /frontend-design)
+	// 第 1 轮：调用 skill（用户在 TUI 里输入 /frontend-design 时走的就是这一步）
 	skillPrompt := skillBody
 	text1, _ := runConversationRound(ag, conv, skillPrompt)
 	t.Logf("Agent (round 1): %s", text1)
@@ -463,7 +463,7 @@ Output files directly using WriteFile.
 		t.Errorf("agent should ask what to build, got: %s", text1)
 	}
 
-	// Round 2: user answers, agent creates file
+	// 第 2 轮：用户回答，Agent 创建文件
 	text2, events2 := runConversationRound(ag, conv, "a login page with email and password")
 	t.Logf("Agent (round 2): %s", text2)
 
@@ -471,7 +471,7 @@ Output files directly using WriteFile.
 		t.Errorf("agent should confirm login page creation, got: %s", text2)
 	}
 
-	// Verify WriteFile was called
+	// 确认 WriteFile 被调用过
 	trs := getToolResults(events2)
 	writeCount := 0
 	for _, tr := range trs {
@@ -486,7 +486,7 @@ Output files directly using WriteFile.
 		t.Errorf("expected 1 WriteFile call, got %d", writeCount)
 	}
 
-	// THE KEY CHECK: verify the file actually exists on disk with correct content
+	// 关键检查：确认文件真的落在磁盘上，内容也正确
 	content, err := os.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("output file not created: %v", err)
@@ -513,7 +513,7 @@ Output files directly using WriteFile.
 	}
 	t.Logf("Output file: %s (%d bytes, all %d checks passed)", outputFile, len(content), len(checks))
 
-	// Verify conversation history is coherent
+	// 确认对话历史是连贯的
 	msgs := conv.GetMessages()
 	t.Logf("Conversation: %d messages", len(msgs))
 	for i, m := range msgs {
@@ -532,14 +532,14 @@ Output files directly using WriteFile.
 }
 
 func TestSkillCreatorOutputsToCorrectDirectory(t *testing.T) {
-	// Simulates: user invokes /skill-creator → provides details →
-	// agent creates the new skill → verify it lands in .mewcode/skills/, not root
+	// 模拟：用户调用 /skill-creator → 提供细节 →
+	// Agent 创建新 skill → 校验它落在 .mewcode/skills/，而不是项目根目录
 
 	workDir := t.TempDir()
 	skillsDir := filepath.Join(workDir, ".mewcode", "skills")
 	os.MkdirAll(skillsDir, 0o755)
 
-	// Set up skill-creator skill
+	// 准备 skill-creator skill
 	creatorDir := filepath.Join(skillsDir, "skill-creator")
 	os.MkdirAll(creatorDir, 0o755)
 	os.WriteFile(filepath.Join(creatorDir, "SKILL.md"), []byte(`---
@@ -561,20 +561,20 @@ The full path should be .mewcode/skills/<skill-name>/SKILL.md.
 	newSkillFile := filepath.Join(newSkillDir, "SKILL.md")
 
 	client := &dynamicMock{handlers: []func([]conversation.Message) []llm.StreamEvent{
-		// Round 1: agent asks what the skill should do
+		// 第 1 轮：Agent 问这个 skill 应该做什么
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: "I'll help you create a new skill! What should this skill do? What would you like to name it?"},
 				llm.StreamEnd{StopReason: "end_turn"},
 			}
 		},
-		// Round 2: user describes, agent creates the skill in .mewcode/skills/
+		// 第 2 轮：用户描述需求，Agent 在 .mewcode/skills/ 下创建 skill
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			last := msgs[len(msgs)-1]
 			if !strings.Contains(last.Content, "git") {
 				t.Errorf("expected user to mention git, got: %s", last.Content)
 			}
-			// Agent creates directory then writes SKILL.md
+			// Agent 先建目录，再写 SKILL.md
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: "I'll create a git-helper skill for you."},
 				llm.ToolCallStart{ToolName: "Bash", ToolID: "b1"},
@@ -585,7 +585,7 @@ The full path should be .mewcode/skills/<skill-name>/SKILL.md.
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// After mkdir, write the SKILL.md
+		// mkdir 之后写 SKILL.md
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.ToolCallStart{ToolName: "WriteFile", ToolID: "w1"},
@@ -608,7 +608,7 @@ Help the user with git operations:
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// Final confirmation
+		// 最终确认
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: fmt.Sprintf("Done! Created git-helper skill at `%s`.\n\nYou can now use it with `/git-helper`.", newSkillFile)},
@@ -624,28 +624,28 @@ Help the user with git operations:
 	ag := New(client, reg, "anthropic")
 	conv := conversation.NewManager()
 
-	// Verify system prompt tells agent where to put skills
+	// 确认系统提示词里告诉了 Agent 该把 skill 放哪
 	if !strings.Contains(skillListing, skillsDir) {
 		t.Fatalf("system prompt missing skills dir: %s", skillsDir)
 	}
 
-	// Round 1: invoke skill-creator
+	// 第 1 轮：调用 skill-creator
 	text1, _ := runConversationRound(ag, conv, skill.PromptBody+"\n\n## User Request\n\ncreate a new skill")
 	t.Logf("Agent (round 1): %s", text1)
 	if !strings.Contains(text1, "skill") {
 		t.Errorf("agent should ask about the skill, got: %s", text1)
 	}
 
-	// Round 2: user describes the skill
+	// 第 2 轮：用户描述这个 skill
 	text2, _ := runConversationRound(ag, conv, "a git helper that helps with branching, rebasing and conflicts")
 	t.Logf("Agent (round 2): %s", text2)
 
-	// THE KEY CHECK: new skill was created inside .mewcode/skills/, NOT in project root
+	// 关键检查：新 skill 建在 .mewcode/skills/ 里，而不是项目根目录
 	if _, err := os.Stat(newSkillFile); os.IsNotExist(err) {
 		t.Fatalf("skill file not created at expected path: %s", newSkillFile)
 	}
 
-	// Verify the new skill can be loaded by the skills system
+	// 确认新 skill 能被 skills 系统加载回来
 	updatedCatalog, err := skills.LoadFromDirectory(skillsDir)
 	if err != nil {
 		t.Fatalf("failed to reload skills: %v", err)
@@ -662,7 +662,7 @@ Help the user with git operations:
 		t.Error("git-helper description should mention git")
 	}
 
-	// Verify it did NOT create files in project root
+	// 确认它没有在项目根目录建文件
 	rootSkillFile := filepath.Join(workDir, "git-helper", "SKILL.md")
 	if _, err := os.Stat(rootSkillFile); err == nil {
 		t.Errorf("skill was INCORRECTLY created at project root: %s", rootSkillFile)
@@ -670,7 +670,7 @@ Help the user with git operations:
 
 	t.Logf("New skill loaded successfully: name=%s, body=%d chars", gitHelper.Meta.Name, len(gitHelper.PromptBody))
 
-	// Verify we now have 2 skills total
+	// 确认现在一共 2 个 skill
 	allSkills := updatedCatalog.List()
 	if len(allSkills) != 2 {
 		t.Errorf("expected 2 skills (skill-creator + git-helper), got %d", len(allSkills))
@@ -678,13 +678,13 @@ Help the user with git operations:
 }
 
 func TestSkillMultiRoundWithToolChain(t *testing.T) {
-	// Simulates a realistic skill session: agent reads existing code,
-	// asks user for confirmation, then writes modified code.
-	// Tests: skill prompt → read → ask user → user confirms → write → verify
+	// 模拟一次真实的 skill 会话：Agent 先读现有代码，
+	// 再找用户确认，然后写入改好的代码。
+	// 测试链路：skill prompt → read → ask user → user confirms → write → verify
 
 	workDir := t.TempDir()
 
-	// Create an existing file the agent will read
+	// 造一个 Agent 待会儿要读的已存在文件
 	srcFile := filepath.Join(workDir, "app.js")
 	os.WriteFile(srcFile, []byte(`const express = require('express');
 const app = express();
@@ -695,7 +695,7 @@ app.listen(3000);
 	outputFile := filepath.Join(workDir, "app.js")
 
 	client := &dynamicMock{handlers: []func([]conversation.Message) []llm.StreamEvent{
-		// Round 1: agent reads the file first
+		// 第 1 轮：Agent 先读文件
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: "Let me check the current code."},
@@ -704,9 +704,9 @@ app.listen(3000);
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// After reading, agent proposes changes
+		// 读完以后，Agent 提出改动方案
 		func(msgs []conversation.Message) []llm.StreamEvent {
-			// Verify the agent actually got the file content
+			// 确认 Agent 确实拿到了文件内容
 			for _, m := range msgs {
 				for _, tr := range m.ToolResults {
 					if !strings.Contains(tr.Content, "express") {
@@ -719,7 +719,7 @@ app.listen(3000);
 				llm.StreamEnd{StopReason: "end_turn"},
 			}
 		},
-		// Round 2: user confirms, agent writes
+		// 第 2 轮：用户确认，Agent 写入
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: "Updating the file with improvements."},
@@ -747,7 +747,7 @@ app.listen(3000);
 				llm.StreamEnd{StopReason: "tool_use"},
 			}
 		},
-		// Final
+		// 收尾
 		func(msgs []conversation.Message) []llm.StreamEvent {
 			return []llm.StreamEvent{
 				llm.TextDelta{Text: "Updated! Added CORS, JSON parsing, health check, and error handling."},
@@ -763,18 +763,18 @@ app.listen(3000);
 	ag := New(client, reg, "anthropic")
 	conv := conversation.NewManager()
 
-	// Round 1: user asks to improve the code
+	// 第 1 轮：用户要求改进代码
 	text1, _ := runConversationRound(ag, conv, fmt.Sprintf("improve the express app at %s", srcFile))
 	t.Logf("Agent (round 1): %s", text1)
 	if !strings.Contains(text1, "proceed") {
 		t.Errorf("agent should ask for confirmation, got: %s", text1)
 	}
 
-	// Round 2: user confirms
+	// 第 2 轮：用户确认
 	text2, _ := runConversationRound(ag, conv, "yes, go ahead")
 	t.Logf("Agent (round 2): %s", text2)
 
-	// Verify the file was actually modified
+	// 确认文件确实被修改了
 	content, err := os.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
@@ -798,7 +798,7 @@ app.listen(3000);
 		}
 	}
 
-	// Verify conversation round-trip integrity
+	// 确认对话往返的完整性
 	msgs := conv.GetMessages()
 	t.Logf("Conversation: %d messages", len(msgs))
 	userMsgCount := 0
@@ -821,7 +821,7 @@ app.listen(3000);
 }
 
 func TestRealSkillsLoadAndRunSimulation(t *testing.T) {
-	// Load the actual installed skills and verify end-to-end simulation works
+	// 加载实际安装的 skill，验证端到端模拟能跑通
 	wd, _ := os.Getwd()
 	for wd != "/" {
 		if _, err := os.Stat(filepath.Join(wd, ".mewcode", "skills")); err == nil {
@@ -840,7 +840,7 @@ func TestRealSkillsLoadAndRunSimulation(t *testing.T) {
 
 	skillListing := buildSkillListing(skillsDir, catalog)
 
-	// Verify system prompt structure
+	// 校验系统提示词的结构
 	if !strings.Contains(skillListing, "Skills are installed at:") {
 		t.Error("system prompt missing skill path")
 	}
@@ -850,7 +850,7 @@ func TestRealSkillsLoadAndRunSimulation(t *testing.T) {
 		}
 	}
 
-	// Test each real skill can be loaded and used as a prompt
+	// 逐个验证真实 skill 能被加载并当作 prompt 使用
 	for _, meta := range metas {
 		skill := catalog.Get(meta.Name)
 		if skill == nil {
@@ -862,13 +862,13 @@ func TestRealSkillsLoadAndRunSimulation(t *testing.T) {
 			continue
 		}
 
-		// Simulate invoking the skill with args
+		// 模拟带参数调用 skill
 		prompt := skill.PromptBody + "\n\n## User Request\n\ntest request for " + meta.Name
 		if !strings.Contains(prompt, "## User Request") {
 			t.Errorf("skill %q prompt missing user request section", meta.Name)
 		}
 
-		// Run one round with a mock that verifies it received the skill prompt
+		// 跑一轮，mock 会校验自己是否收到了 skill prompt
 		client := &dynamicMock{handlers: []func([]conversation.Message) []llm.StreamEvent{
 			func(msgs []conversation.Message) []llm.StreamEvent {
 				lastUser := msgs[len(msgs)-1]
@@ -926,7 +926,7 @@ func TestAgentOnLoopCompleteFiresOnFinalTurn(t *testing.T) {
 }
 
 func TestAgentOnLoopCompleteSkippedOnError(t *testing.T) {
-	// Hits MaxIterations before LoopComplete — callback must not fire.
+	// 在 LoopComplete 之前就撞上 MaxIterations —— 回调不能触发。
 	loop := []llm.StreamEvent{
 		llm.ToolCallStart{ToolName: "Glob", ToolID: "t"},
 		llm.ToolCallComplete{ToolID: "t", ToolName: "Glob", Arguments: map[string]any{"pattern": "*"}},
@@ -952,7 +952,7 @@ func TestAgentOnLoopCompleteSkippedOnError(t *testing.T) {
 	case <-called:
 		t.Error("OnLoopComplete must not fire when loop exits via error")
 	case <-time.After(200 * time.Millisecond):
-		// expected: no callback
+		// 预期：没有回调
 	}
 }
 

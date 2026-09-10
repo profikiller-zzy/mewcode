@@ -15,7 +15,7 @@ import (
 	"mewcode/internal/tools"
 )
 
-// --- Mock infrastructure ---
+// --- Mock 基础设施 ---
 
 type mockClient struct {
 	mu       sync.Mutex
@@ -71,7 +71,7 @@ func (t *mockTool) Execute(ctx context.Context, args map[string]any) tools.ToolR
 	return tools.ToolResult{Output: "ok"}
 }
 
-// --- Unit tests for pure helpers ---
+// --- 纯辅助函数的单元测试 ---
 
 func TestGetWrittenFilePath(t *testing.T) {
 	cases := []struct {
@@ -102,8 +102,8 @@ func TestExtractWrittenPathsDedupes(t *testing.T) {
 		}},
 		{Role: "user"},
 		{Role: "assistant", ToolUses: []conversation.ToolUseBlock{
-			{ToolName: "WriteFile", Arguments: map[string]any{"file_path": "/m/a.md"}}, // dup
-			{ToolName: "ReadFile", Arguments: map[string]any{"file_path": "/m/a.md"}},  // not Write/Edit
+			{ToolName: "WriteFile", Arguments: map[string]any{"file_path": "/m/a.md"}}, // 重复项
+			{ToolName: "ReadFile", Arguments: map[string]any{"file_path": "/m/a.md"}},  // 不是 Write/Edit
 			{ToolName: "WriteFile", Arguments: map[string]any{"file_path": "/m/b.md"}},
 		}},
 	}
@@ -119,7 +119,7 @@ func TestCountModelVisibleMessagesSince(t *testing.T) {
 		{Role: "user"},      // 0
 		{Role: "assistant"}, // 1
 		{Role: "user"},      // 2
-		{Role: "tool"},      // 3 — not model-visible
+		{Role: "tool"},      // 3 —— 模型不可见
 		{Role: "assistant"}, // 4
 	}
 	if got := countModelVisibleMessagesSince(msgs, 0); got != 4 {
@@ -159,22 +159,22 @@ func TestHasMemoryWritesSince(t *testing.T) {
 	if hasMemoryWritesSince(msgs, 0, tmp) != true {
 		t.Error("should detect memory write at idx 3")
 	}
-	// Skip past the memory write: cursor at 4 → nothing left
+	// 跳过这次记忆写入：游标在 4 → 后面没有了
 	if hasMemoryWritesSince(msgs, 4, tmp) != false {
 		t.Error("cursor past all writes should return false")
 	}
-	// Cursor at 2: still has the memory write at 3
+	// 游标在 2：索引 3 处的记忆写入还在后面
 	if hasMemoryWritesSince(msgs, 2, tmp) != true {
 		t.Error("cursor before memory write should return true")
 	}
-	// Only outside-memory writes
+	// 只有记忆目录之外的写入
 	subset := msgs[:2]
 	if hasMemoryWritesSince(subset, 0, tmp) != false {
 		t.Error("outside-memory writes alone should not trigger skip")
 	}
 }
 
-// --- Integration: full extraction round trip ---
+// --- 集成测试：完整提取往返 ---
 
 func TestExtractorEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
@@ -183,13 +183,13 @@ func TestExtractorEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Parent conversation with one user/assistant exchange — the extractor
-	// will see this as "newMessageCount" worth of content to consider.
+	// 父对话里有一次 user/assistant 往返 —— extractor 会把它看成
+	// 需要考虑的 "newMessageCount" 那么多内容。
 	parent := conversation.NewManager()
 	parent.AddUserMessage("Remember I'm a Go engineer")
 	parent.AddAssistantMessage("Sure, I'll remember.")
 
-	// Forked agent script: write user_role.md, end turn.
+	// fork 出去的 agent 脚本：写入 user_role.md，然后结束本轮。
 	writePath := filepath.Join(memDir, "user_role.md")
 	client := &mockClient{handlers: []func([]conversation.Message) []llm.StreamEvent{
 		func(_ []conversation.Message) []llm.StreamEvent {
@@ -249,7 +249,7 @@ func TestExtractorEndToEnd(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	// Verify file landed on disk
+	// 确认文件已经落到磁盘上
 	if _, err := os.Stat(writePath); err != nil {
 		t.Fatalf("expected user_role.md to exist after extraction: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestExtractorEndToEnd(t *testing.T) {
 		t.Errorf("AppendSystem should announce saved memory, got %q", got)
 	}
 
-	// Cursor should have advanced past all parent messages
+	// 游标应当已经越过父对话的所有消息
 	if e.lastMemoryMessageIdx != len(parent.GetMessages()) {
 		t.Errorf("cursor not advanced: got %d, want %d",
 			e.lastMemoryMessageIdx, len(parent.GetMessages()))
@@ -335,7 +335,7 @@ func TestExtractorBuildExtractorConversationAppendsPrompt(t *testing.T) {
 	if msgs[2].Role != "user" || !strings.Contains(msgs[2].Content, "EXTRACTION_PROMPT") {
 		t.Errorf("last message should be user with prompt; got %+v", msgs[2])
 	}
-	// Forked is a new Manager — modifying it must not touch parent
+	// Forked 是一个新的 Manager —— 改它不能影响 parent
 	if len(parent.GetMessages()) != 2 {
 		t.Error("parent conversation was mutated")
 	}

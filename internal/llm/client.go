@@ -17,9 +17,9 @@ type Client interface {
 	SetSystemPrompt(prompt string)
 }
 
-// StreamMetadata correlates one provider request with the AgentRun and ReAct
-// iteration that issued it. It is carried in context so existing provider and
-// third-party Client implementations remain source compatible.
+// StreamMetadata 把一次 provider 请求与发起它的 AgentRun、ReAct
+// 轮次关联起来。它通过 context 传递，这样已有的 provider 和
+// 第三方 Client 实现保持源码兼容。
 type StreamMetadata struct {
 	SessionID string
 	RunID     string
@@ -38,9 +38,9 @@ func StreamMetadataFromContext(ctx context.Context) (StreamMetadata, bool) {
 	return metadata, ok
 }
 
-// StreamRequest makes the single-request boundary explicit. StreamOnce is the
-// adapter used by AgentRun; it deliberately performs exactly one Client.Stream
-// call and does not own retries, tools, memory, or the ReAct loop.
+// StreamRequest 把「单次请求」的边界显性化。StreamOnce 是 AgentRun 用的
+// 适配器；它有意只执行一次 Client.Stream
+// 调用，不负责重试、工具、memory 或 ReAct 循环。
 type StreamRequest struct {
 	Metadata     StreamMetadata
 	Conversation *conversation.Manager
@@ -64,9 +64,9 @@ type RequestLifecycle struct {
 
 type streamObserverKey struct{}
 
-// WithStreamObserver installs a run-local observer. Because it is carried by
-// context, nested compaction requests are correlated without importing the
-// agent package or changing provider implementations.
+// WithStreamObserver 装上一个 run 级别的 observer。因为它挂在 context 上，
+// 嵌套的 compaction 请求也能被关联起来，无需引入
+// agent 包或改动 provider 实现。
 func WithStreamObserver(ctx context.Context, observer func(RequestLifecycle)) context.Context {
 	return context.WithValue(ctx, streamObserverKey{}, observer)
 }
@@ -172,26 +172,26 @@ func NewClient(cfg *config.ProviderConfig, systemPrompt string) (Client, error) 
 	}
 }
 
-// contextWindowFetcher is implemented by clients that can pull the model's
-// context window from their provider. Only the Anthropic client does so.
+// contextWindowFetcher 由那些能向自己的 provider 拉取模型 context window 的
+// client 实现。目前只有 Anthropic client 这么做。
 type contextWindowFetcher interface {
 	FetchModelContextWindow(ctx context.Context) int
 }
 
-// ResolveContextWindow performs layer 2 of context-window resolution: for
-// Anthropic-protocol providers it pulls the model's max_input_tokens from
-// {base_url}/v1/models/{model} once and caches it on cfg via
-// SetFetchedContextWindow, so later cfg.GetContextWindow() calls use it
-// without hitting the network again.
+// ResolveContextWindow 执行 context window 解析的第 2 层：对于
+// Anthropic 协议的 provider，它从 {base_url}/v1/models/{model}
+// 拉取一次模型的 max_input_tokens，并通过
+// SetFetchedContextWindow 缓存到 cfg 上，这样后续
+// cfg.GetContextWindow() 直接用缓存，不再走网络。
 //
-// It is fully best-effort and never returns an error: a non-Anthropic
-// provider, a client-construction failure, or a failed/timed-out fetch all
-// leave the cache untouched, letting GetContextWindow fall back to the
-// built-in mapping table / default. Safe to call at startup — it will not
-// block beyond the fetch's own timeout and will not panic.
+// 它完全是尽力而为的，永不返回错误：非 Anthropic 的 provider、
+// client 构造失败、或拉取失败/超时，都不会动缓存，
+// 让 GetContextWindow 回退到内置的
+// 映射表 / 默认值。启动时调用是安全的 —— 除拉取本身的超时外不会阻塞，
+// 也不会 panic。
 func ResolveContextWindow(ctx context.Context, cfg *config.ProviderConfig) {
-	// An explicit config value already wins in GetContextWindow, so there's
-	// nothing to fetch. Likewise skip if we've already cached a value.
+	// 显式配置值在 GetContextWindow 里本来就优先，所以没什么可拉的。
+	// 已经缓存过值的情况同样跳过。
 	if cfg == nil || cfg.ContextWindow > 0 {
 		return
 	}

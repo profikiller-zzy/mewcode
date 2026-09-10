@@ -13,12 +13,12 @@ type AgentLoader struct {
 	workDir string
 	agents  map[string]*AgentDefinition
 
-	// FailedFiles records definition files that failed to parse during the most recent LoadAll. Each
-	// entry is "<path>: <reason>".
+	// FailedFiles 记录最近一次 LoadAll 中解析失败的定义文件。
+	// 每项是 "<path>: <reason>"。
 	FailedFiles []string
 
-	// ErrorWriter receives one-line warnings for parse failures. Defaults to os.Stderr; tests override
-	// it to capture output.
+	// ErrorWriter 接收解析失败的单行警告。默认是 os.Stderr；
+	// 测试会覆盖它来捕获输出。
 	ErrorWriter io.Writer
 }
 
@@ -53,7 +53,6 @@ func (l *AgentLoader) LoadAll() error {
 			Model:           spec.Model,
 			MaxTurns:        spec.MaxTurns,
 			SystemPrompt:    spec.SystemPromptOverride,
-			Background:      spec.Background,
 			Source:          "built-in",
 		}
 	}

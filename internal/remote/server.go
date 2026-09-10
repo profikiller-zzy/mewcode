@@ -55,7 +55,7 @@ type userMessageData struct {
 
 type permResponseData struct {
 	ID       string `json:"id"`
-	Response string `json:"response"` // "allow" / "deny" / "allowAlways"
+	Response string `json:"response"` // "allow" / "deny" / "allowAlways" 三种取值
 }
 
 type askUserResponseData struct {
@@ -76,8 +76,8 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns map[*websocket.Conn]struct{}
-	// stateMu serializes session replacement/control commands with prompt
-	// submission. It is never held while consuming a run's event stream.
+	// stateMu 把「会话替换 / 控制命令」和「提交 prompt」这两件事串行化。
+	// 消费某个 run 的事件流期间绝不会持有它。
 	stateMu sync.Mutex
 
 	ag           *agent.Agent
@@ -360,7 +360,6 @@ func (s *Server) registerTools(client llm.Client, p *config.ProviderConfig, wd s
 		ModelResolver: llm.NewModelResolver(*p),
 		Registry:      s.registry,
 		Protocol:      p.Protocol,
-		TaskMgr:       s.taskMgr,
 		ProgressCh:    subProgressCh,
 		Loader:        loader,
 		Conversation:  s.conv,

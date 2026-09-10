@@ -16,11 +16,11 @@ import (
 	"mewcode/internal/conversation"
 )
 
-// TypeCompactBoundary marks a session record as a compaction boundary rather
-// than a plain conversation message. A boundary record's Content holds a JSON
-// blob (see CompactBoundary) carrying the summary text plus the recent tail
-// (keep) that was preserved verbatim at compaction time. Plain messages leave
-// Type empty (omitempty), so old sessions and normal turns are unaffected.
+// TypeCompactBoundary 把一条会话记录标记为压缩边界，而不是
+// 普通的对话消息。边界记录的 Content 存放一个 JSON
+// blob（见 CompactBoundary），里面是摘要文本加上压缩时
+// 原样保留的近期尾部（keep）。普通消息的
+// Type 为空（omitempty），因此旧会话和正常轮次都不受影响。
 const TypeCompactBoundary = "compact_boundary"
 
 // ToolUseRecord 是落盘形式的工具调用。这里存的是与协议无关的内部表示，
@@ -41,9 +41,9 @@ type ToolResultRecord struct {
 type Message struct {
 	Role  string `json:"role"`
 	RunID string `json:"run_id,omitempty"`
-	// Type distinguishes record kinds. Empty (the default, omitted from JSON)
-	// means a plain conversation message; TypeCompactBoundary means Content is a
-	// CompactBoundary JSON blob written by SaveCompactBoundary.
+	// Type 区分记录类型。为空（默认值，JSON 中会省略）表示普通的
+	// 对话消息；TypeCompactBoundary 表示 Content 是由
+	// SaveCompactBoundary 写入的 CompactBoundary JSON blob。
 	Type    string `json:"type,omitempty"`
 	Content string `json:"content"`
 	Ts      int64  `json:"ts"`
@@ -135,20 +135,20 @@ func (m KeepMessage) ToConversation() conversation.Message {
 	}.ToConversation()
 }
 
-// CompactBoundary is the structured payload stored (as JSON) in the Content of a
-// TypeCompactBoundary record. Summary is the LLM-produced summary of the
-// older prefix; Keep is the recent tail that was kept verbatim. On resume the
-// compacted state is rebuilt as: [user message = Summary] + Keep + any plain
-// messages appended after the boundary.
+// CompactBoundary 是以 JSON 形式存放在 TypeCompactBoundary 记录
+// 的 Content 里的结构化载荷。Summary 是 LLM 对较早前缀生成的
+// 摘要；Keep 是原样保留的近期尾部。恢复会话时压缩后的状态按
+// 以下方式重建：[user message = Summary] + Keep +
+// 边界之后追加的所有普通消息。
 type CompactBoundary struct {
 	Summary string        `json:"summary"`
 	Keep    []KeepMessage `json:"keep"`
 }
 
-// SaveCompactBoundary appends a compaction boundary record to the session log.
-// The boundary is append-only: the original prefix messages stay in the file but
-// are not replayed on resume (see FindLastCompactBoundary). The summary + keep
-// are inlined into the record's Content as a CompactBoundary JSON blob.
+// SaveCompactBoundary 往会话日志里追加一条压缩边界记录。
+// 边界是只追加的：原始的前缀消息仍留在文件里，但恢复时不会重放
+// （见 FindLastCompactBoundary）。summary + keep 会作为
+// CompactBoundary JSON blob 内联进记录的 Content。
 func SaveCompactBoundary(workDir, sessionID, summary string, keep []KeepMessage) {
 	blob, err := json.Marshal(CompactBoundary{Summary: summary, Keep: keep})
 	if err != nil {
@@ -162,11 +162,11 @@ func SaveCompactBoundary(workDir, sessionID, summary string, keep []KeepMessage)
 	})
 }
 
-// FindLastCompactBoundary scans the loaded records for the last compaction
-// boundary. It returns the parsed boundary, the slice of plain messages appended
-// after that boundary, and ok=true when a boundary was found. When no boundary
-// exists (ok=false) the caller should replay all records verbatim
-// (backward-compatible: old sessions have no boundary records).
+// FindLastCompactBoundary 扫描已加载的记录，找出最后一个压缩边界。
+// 它返回解析出的边界、该边界之后追加的普通消息切片，找到边界时
+// ok 为 true。不存在边界时
+// （ok=false），调用方应当原样重放所有记录
+// （向后兼容：旧会话本来就没有边界记录）。
 func FindLastCompactBoundary(msgs []Message) (boundary CompactBoundary, after []Message, ok bool) {
 	last := -1
 	for i, m := range msgs {
@@ -178,13 +178,13 @@ func FindLastCompactBoundary(msgs []Message) (boundary CompactBoundary, after []
 		return CompactBoundary{}, nil, false
 	}
 	if err := json.Unmarshal([]byte(msgs[last].Content), &boundary); err != nil {
-		// Corrupt boundary blob — fall back to full replay rather than losing
-		// the conversation.
+		// 边界 blob 损坏 —— 退回完整重放，总好过把整段对话丢掉。
+		//
 		return CompactBoundary{}, nil, false
 	}
 	for _, m := range msgs[last+1:] {
 		if m.Type == TypeCompactBoundary {
-			continue // defensive; FindLast already targeted the final one
+			continue // 防御性处理；FindLast 已经定位到最后一个了
 		}
 		after = append(after, m)
 	}

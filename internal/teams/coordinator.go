@@ -30,7 +30,7 @@ var CoordinatorAllowedTools = map[string]bool{
 	"TeamDelete":      true,
 }
 
-// IsCoordinatorTool checks if a tool is allowed in Coordinator Mode.
+// IsCoordinatorTool 判断某个工具在 Coordinator 模式下是否可用。
 func IsCoordinatorTool(name string) bool {
 	return CoordinatorAllowedTools[name]
 }

@@ -136,14 +136,14 @@ func partitionToolCalls(entries []toolCallEntry, registry *tools.Registry) []too
 	return batches
 }
 
-// HasPending reports whether any tool calls have been submitted.
+// HasPending 报告是否有已提交的工具调用。
 func (se *StreamingExecutor) HasPending() bool {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	return len(se.calls) > 0
 }
 
-// Reset clears the executor state for the next turn.
+// Reset 清空执行器状态，为下一轮做准备。
 func (se *StreamingExecutor) Reset() {
 	se.mu.Lock()
 	defer se.mu.Unlock()

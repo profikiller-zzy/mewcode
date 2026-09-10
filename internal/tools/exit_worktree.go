@@ -8,10 +8,10 @@ import (
 	"mewcode/internal/worktree"
 )
 
-// ExitWorktreeTool exits a worktree session created by EnterWorktree and restores the original
-// working directory.
+// ExitWorktreeTool 退出由 EnterWorktree 创建的 worktree session，
+// 并把工作目录恢复成原来的那个。
 type ExitWorktreeTool struct {
-	RepoRoot string // injected by TUI at startup
+	RepoRoot string // 由 TUI 在启动时注入
 }
 
 func (t *ExitWorktreeTool) Name() string           { return "ExitWorktree" }
@@ -45,7 +45,7 @@ func (t *ExitWorktreeTool) Schema() map[string]any {
 }
 
 func (t *ExitWorktreeTool) Execute(ctx context.Context, args map[string]any) ToolResult {
-	// Scope guard: only operates on worktrees created by EnterWorktree in THIS session.
+	// 作用域守卫：只处理本次 session 里由 EnterWorktree 创建的 worktree。
 	session := worktree.GetCurrentWorktreeSession()
 	if session == nil {
 		return ToolResult{
@@ -62,7 +62,7 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, args map[string]any) Too
 		repoRoot = session.OriginalCwd
 	}
 
-	// Validate: if removing without discard_changes, check for changes.
+	// 校验：remove 但没带 discard_changes 时，先检查有没有未提交的改动。
 	if action == "remove" && !discardChanges {
 		summary := worktree.CountWorktreeChanges(ctx, session.WorktreePath, session.OriginalHeadCommit)
 		if summary == nil {
@@ -104,7 +104,7 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, args map[string]any) Too
 		}
 	}
 
-	// Capture session info before cleanup.
+	// 清理之前先把 session 信息取出来。
 	originalCwd := session.OriginalCwd
 	worktreePath := session.WorktreePath
 	worktreeBranch := session.WorktreeBranch
@@ -129,7 +129,7 @@ func (t *ExitWorktreeTool) Execute(ctx context.Context, args map[string]any) Too
 		}
 	}
 
-	// action == "remove".
+	// action == "remove" 的情况。
 	if err := worktree.CleanupWorktree(ctx, repoRoot); err != nil {
 		return ToolResult{
 			Output:  fmt.Sprintf("Error removing worktree: %s", err),

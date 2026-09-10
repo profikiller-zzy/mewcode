@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// TraceEventType follows AG-UI lifecycle semantics while retaining the extra
-// events needed to replay a complete ReAct run.
+// TraceEventType 遵循 AG-UI 的生命周期语义，同时保留重放一次完整
+// ReAct run 所需的额外事件。
 type TraceEventType string
 
 const (
@@ -59,9 +59,9 @@ const (
 	RunUserRejected     RunFinishReason = "user_rejected"
 )
 
-// TraceEvent is the provider-neutral, append-only record used for live
-// subscribers and persistence. Payloads contain summaries/references rather
-// than unrestricted tool output.
+// TraceEvent 是与 provider 无关的、只追加的记录，用于实时订阅者和持久化。
+// Payload 里放的是摘要/引用，
+// 而不是不加限制的工具输出。
 type TraceEvent struct {
 	Type       TraceEventType  `json:"type"`
 	Source     TraceSource     `json:"source"`
@@ -77,7 +77,7 @@ type TraceEvent struct {
 	Payload    map[string]any  `json:"payload,omitempty"`
 }
 
-// TraceSink receives already-sequenced trace events.
+// TraceSink 接收已经编好序号的 trace 事件。
 type TraceSink interface {
 	AppendTrace(context.Context, TraceEvent) error
 }
@@ -86,8 +86,8 @@ type TraceSequenceLoader interface {
 	LastTraceSequence(sessionID, runID string) (uint64, error)
 }
 
-// TraceRecorder serializes events within each run and fans them out to live
-// subscribers. Slow subscribers never block the AgentRun.
+// TraceRecorder 在每次 run 内部把事件串行化，并扇出给实时订阅者。
+// 慢订阅者永远不会阻塞 AgentRun。
 type TraceRecorder struct {
 	mu          sync.Mutex
 	sink        TraceSink
@@ -188,8 +188,8 @@ func newTraceSubscriber(buffer int) *traceSubscriber {
 	return subscriber
 }
 
-// MemoryTraceStore is useful for tests and embedders that provide their own
-// durable store later.
+// MemoryTraceStore 适用于测试，也适用于之后
+// 会自带持久化存储的嵌入方。
 type MemoryTraceStore struct {
 	mu     sync.Mutex
 	events []TraceEvent
@@ -225,8 +225,8 @@ func (s *MemoryTraceStore) LastTraceSequence(sessionID, runID string) (uint64, e
 	return last, nil
 }
 
-// JSONLTraceStore persists one append-only JSONL file per run. A single store
-// is safe for concurrent sessions.
+// JSONLTraceStore 为每次 run 持久化一个只追加的 JSONL 文件。
+// 单个 store 在并发 session 下是安全的。
 type JSONLTraceStore struct {
 	Root string
 	mu   sync.Mutex

@@ -31,8 +31,8 @@ func TestPrepareInputImage_URLPassthrough(t *testing.T) {
 
 func TestPrepareInputImage_LocalFileShrinksUnderBudget(t *testing.T) {
 	dir := t.TempDir()
-	// Random-pixel PNG defeats compression, forcing the shrinker to actually
-	// downscale rather than just lowering JPEG quality.
+	// 随机像素的 PNG 压不动，逼着压缩逻辑真的去降采样，
+	// 而不是只调低 JPEG 质量。
 	path := filepath.Join(dir, "big.png")
 	writeRandomPNG(t, path, 1024, 1536)
 
@@ -43,11 +43,11 @@ func TestPrepareInputImage_LocalFileShrinksUnderBudget(t *testing.T) {
 	if !strings.HasPrefix(out, "data:image/jpeg;base64,") {
 		t.Fatalf("expected jpeg data URI, got prefix %q", out[:40])
 	}
-	// Upstream rejects URIs much over ~80KB; assert we stayed well under that.
+	// 上游会拒绝远大于 ~80KB 的 URI；断言我们稳稳低于这个量。
 	if len(out) > 80*1024 {
 		t.Errorf("data URI is %d bytes, want <= 80KB", len(out))
 	}
-	// And the bytes must still decode to a valid JPEG.
+	// 而且这些字节必须仍能解出合法的 JPEG。
 	b64 := strings.TrimPrefix(out, "data:image/jpeg;base64,")
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
@@ -71,8 +71,8 @@ func TestPrepareInputImage_RelativePathResolvesAgainstWorkDir(t *testing.T) {
 }
 
 func TestPrepareInputImage_DataURIIsReprocessed(t *testing.T) {
-	// Encode a random 800x800 PNG as a data URI; without re-encoding it would
-	// blow past the 80KB cap.
+	// 把一张随机的 800x800 PNG 编成 data URI；不重新编码的话
+	// 就会超过 80KB 上限。
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.png")
 	writeRandomPNG(t, path, 800, 800)

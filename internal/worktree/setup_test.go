@@ -12,10 +12,10 @@ func TestCopySettingsLocal(t *testing.T) {
 	repo := t.TempDir()
 	wt := t.TempDir()
 
-	// No settings file → should not error
+	// 没有 settings 文件 → 不应该报错
 	copySettingsLocal(repo, wt)
 
-	// Create settings file
+	// 创建一个 settings 文件
 	srcDir := filepath.Join(repo, ".mewcode")
 	os.MkdirAll(srcDir, 0o755)
 	srcFile := filepath.Join(srcDir, "settings.local.json")
@@ -41,11 +41,11 @@ func TestConfigureHooksPath(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	// Create .husky directory
+	// 创建 .husky 目录
 	huskyDir := filepath.Join(repo, ".husky")
 	os.MkdirAll(huskyDir, 0o755)
 
-	// Create a worktree to test hooks config
+	// 创建一个 worktree 来测 hooks 配置
 	result, err := getOrCreateWorktree(context.Background(), repo, "hooks-test")
 	if err != nil {
 		t.Fatalf("create worktree failed: %v", err)
@@ -53,7 +53,7 @@ func TestConfigureHooksPath(t *testing.T) {
 
 	configureHooksPath(context.Background(), repo, result.WorktreePath)
 
-	// Check that hooks path is set
+	// 检查 hooks 路径是否已经设置
 	stdout, _, code := runGit(context.Background(), result.WorktreePath, "config", "core.hooksPath")
 	if code != 0 {
 		t.Fatal("core.hooksPath not set")
@@ -73,7 +73,7 @@ func TestSymlinkDirectories(t *testing.T) {
 	repo := t.TempDir()
 	wt := t.TempDir()
 
-	// Create source directory
+	// 创建源目录
 	vendor := filepath.Join(repo, "vendor")
 	os.MkdirAll(vendor, 0o755)
 
@@ -93,7 +93,7 @@ func TestSymlinkDirectories_PathTraversal(t *testing.T) {
 	repo := t.TempDir()
 	wt := t.TempDir()
 
-	// Should skip path traversal attempts
+	// 应该跳过路径穿越的尝试
 	symlinkDirectories(repo, wt, []string{"../escape"})
 	if _, err := os.Lstat(filepath.Join(wt, "../escape")); !os.IsNotExist(err) {
 		t.Fatal("should not create symlink for path traversal")
@@ -109,13 +109,13 @@ func TestCopyWorktreeIncludeFiles(t *testing.T) {
 	initTestRepo(t, repo)
 	wt := t.TempDir()
 
-	// No .worktreeinclude → returns nil, nil
+	// 没有 .worktreeinclude → 返回 nil, nil
 	copied, err := CopyWorktreeIncludeFiles(context.Background(), repo, wt)
 	if err != nil || copied != nil {
 		t.Fatalf("expected (nil, nil) without .worktreeinclude, got (%v, %v)", copied, err)
 	}
 
-	// Create .env (gitignored) and .worktreeinclude
+	// 创建 .env（被 gitignore 的）和 .worktreeinclude
 	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".env\n"), 0o644)
 	os.WriteFile(filepath.Join(repo, ".env"), []byte("SECRET=abc"), 0o644)
 	os.WriteFile(filepath.Join(repo, ".worktreeinclude"), []byte(".env\n"), 0o644)
@@ -131,7 +131,7 @@ func TestCopyWorktreeIncludeFiles(t *testing.T) {
 		t.Fatalf("expected [.env], got %v", copied)
 	}
 
-	// Verify file was copied
+	// 验证文件确实被复制了
 	data, err := os.ReadFile(filepath.Join(wt, ".env"))
 	if err != nil || string(data) != "SECRET=abc" {
 		t.Fatal(".env not correctly copied")
@@ -145,7 +145,7 @@ func TestMatchesWorktreeInclude(t *testing.T) {
 		expected bool
 	}{
 		{".env", []string{".env"}, true},
-		{".env", []string{"*.env"}, true}, // filepath.Match("*.env", ".env") matches in Go
+		{".env", []string{"*.env"}, true}, // 在 Go 里 filepath.Match("*.env", ".env") 是匹配的
 		{"config/.env", []string{".env"}, true},
 		{"config/.env", []string{"config/"}, true},
 		{"other.txt", []string{".env"}, false},
@@ -171,7 +171,7 @@ func TestFindCanonicalGitRoot(t *testing.T) {
 		t.Fatalf("expected %q, got %q", repo, root)
 	}
 
-	// Non-git directory
+	// 非 git 目录
 	tmp := t.TempDir()
 	root = FindCanonicalGitRoot(tmp)
 	if root != "" {

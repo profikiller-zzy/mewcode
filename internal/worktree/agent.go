@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// AgentWorktreeResult holds the result of CreateAgentWorktree.
+// AgentWorktreeResult 保存 CreateAgentWorktree 的结果。
 type AgentWorktreeResult struct {
 	WorktreePath   string
 	WorktreeBranch string
@@ -14,9 +14,9 @@ type AgentWorktreeResult struct {
 	GitRoot        string
 }
 
-// CreateAgentWorktree creates a lightweight worktree for a sub-agent. Unlike
-// CreateWorktreeForSession, it does NOT touch global session state (currentWorktreeSession,
-// process.chdir, project config).
+// CreateAgentWorktree 给 sub-agent 建一个轻量 worktree。与
+// CreateWorktreeForSession 不同，它不会碰全局会话状态
+// （currentWorktreeSession、process.chdir、项目配置）。
 func CreateAgentWorktree(ctx context.Context, slug string) (*AgentWorktreeResult, error) {
 	if err := ValidateWorktreeSlug(slug); err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func CreateAgentWorktree(ctx context.Context, slug string) (*AgentWorktreeResult
 	if !result.Existed {
 		performPostCreationSetup(ctx, gitRoot, result.WorktreePath)
 	} else {
-		// Bump mtime so periodic stale cleanup doesn't consider this stale.
+		// 更新 mtime，免得周期性的过期清理把它当成过期的。
 		now := time.Now()
 		_ = os.Chtimes(result.WorktreePath, now, now)
 	}
@@ -49,7 +49,7 @@ func CreateAgentWorktree(ctx context.Context, slug string) (*AgentWorktreeResult
 	}, nil
 }
 
-// RemoveAgentWorktree removes a worktree created by CreateAgentWorktree.
+// RemoveAgentWorktree 移除由 CreateAgentWorktree 创建的 worktree。
 func RemoveAgentWorktree(ctx context.Context, worktreePath, worktreeBranch, gitRoot string) bool {
 	if gitRoot == "" {
 		return false
@@ -61,7 +61,7 @@ func RemoveAgentWorktree(ctx context.Context, worktreePath, worktreeBranch, gitR
 	}
 
 	if worktreeBranch != "" {
-		// Wait for git lockfile release (sleep).
+		// 等 git 释放 lockfile（sleep）。
 		time.Sleep(100 * time.Millisecond)
 		runGit(ctx, gitRoot, "branch", "-D", worktreeBranch)
 	}

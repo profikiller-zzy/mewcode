@@ -127,22 +127,22 @@ func TestDiscoveredToolsIncludedInSchemas(t *testing.T) {
 	reg.Register(&mockDeferredTool{name: "mcp__grafana__query", desc: "Query Prometheus"})
 	reg.Register(&mockDeferredTool{name: "mcp__grafana__search", desc: "Search dashboards"})
 
-	// Before discovery: only ReadFile
+	// 发现之前：只有 ReadFile
 	schemas := reg.GetAllSchemas("anthropic")
 	if len(schemas) != 1 {
 		t.Errorf("before discovery: expected 1 schema, got %d", len(schemas))
 	}
 
-	// Discover one tool
+	// 发现其中一个工具
 	reg.MarkDiscovered("mcp__grafana__query")
 
-	// After discovery: ReadFile + discovered tool
+	// 发现之后：ReadFile + 已发现的工具
 	schemas = reg.GetAllSchemas("anthropic")
 	if len(schemas) != 2 {
 		t.Errorf("after discovery: expected 2 schemas, got %d", len(schemas))
 	}
 
-	// GetDeferredToolNames should only return undiscovered ones
+	// GetDeferredToolNames 只该返回还没发现的
 	names := reg.GetDeferredToolNames()
 	if len(names) != 1 || names[0] != "mcp__grafana__search" {
 		t.Errorf("expected only mcp__grafana__search as deferred, got %v", names)
@@ -270,8 +270,8 @@ func TestToolSearchNoMatch(t *testing.T) {
 	}
 }
 
-// mockLargeDeferredTool simulates a realistic MCP tool with a large schema
-// (~500+ chars of JSON per tool, mimicking real Grafana/Playwright tools).
+// mockLargeDeferredTool 模拟一个带大 schema 的真实 MCP 工具
+// （每个工具 500+ 字符的 JSON，仿照真实的 Grafana/Playwright 工具）。
 type mockLargeDeferredTool struct {
 	name string
 	desc string
@@ -309,11 +309,11 @@ func (t *mockLargeDeferredTool) Execute(ctx context.Context, args map[string]any
 func TestDeferredTokenSavings(t *testing.T) {
 	reg := NewRegistry()
 
-	// Register 2 normal (non-deferred) tools with small schemas.
+	// 注册 2 个 schema 很小的普通（非延迟）工具。
 	reg.Register(&mockNormalTool{name: "ReadFile"})
 	reg.Register(&mockNormalTool{name: "WriteFile"})
 
-	// Register 50 deferred tools with realistic large schemas.
+	// 注册 50 个带真实大 schema 的延迟工具。
 	for i := 0; i < 50; i++ {
 		reg.Register(&mockLargeDeferredTool{
 			name: fmt.Sprintf("mcp__grafana__tool_%03d", i),
@@ -321,7 +321,7 @@ func TestDeferredTokenSavings(t *testing.T) {
 		})
 	}
 
-	// Measure size with deferred tools hidden (default state).
+	// 测量延迟工具隐藏时（默认状态）的大小。
 	schemasDeferred := reg.GetAllSchemas("anthropic")
 	bytesDeferred, err := json.Marshal(schemasDeferred)
 	if err != nil {
@@ -329,12 +329,12 @@ func TestDeferredTokenSavings(t *testing.T) {
 	}
 	sizeDeferred := len(bytesDeferred)
 
-	// Discover all 50 deferred tools.
+	// 把 50 个延迟工具全部标记为已发现。
 	for i := 0; i < 50; i++ {
 		reg.MarkDiscovered(fmt.Sprintf("mcp__grafana__tool_%03d", i))
 	}
 
-	// Measure size with all tools included.
+	// 测量所有工具都放进来的大小。
 	schemasAll := reg.GetAllSchemas("anthropic")
 	bytesAll, err := json.Marshal(schemasAll)
 	if err != nil {
@@ -356,7 +356,7 @@ func TestDeferredEndToEndDiscovery(t *testing.T) {
 	reg.Register(&mockDeferredTool{name: "mcp__playwright__click", desc: "Click an element"})
 	reg.Register(&mockDeferredTool{name: "mcp__playwright__fill", desc: "Fill a form field"})
 
-	// Step 1: Deferred tools should NOT appear in GetAllSchemas.
+	// 第 1 步：延迟工具不该出现在 GetAllSchemas 里。
 	schemas := reg.GetAllSchemas("anthropic")
 	for _, s := range schemas {
 		name := s["name"].(string)
@@ -368,7 +368,7 @@ func TestDeferredEndToEndDiscovery(t *testing.T) {
 		t.Errorf("expected 1 schema (Bash only), got %d", len(schemas))
 	}
 
-	// Step 2: Both deferred tool names should be returned by GetDeferredToolNames.
+	// 第 2 步：两个延迟工具的名字都该由 GetDeferredToolNames 返回。
 	deferredNames := reg.GetDeferredToolNames()
 	nameSet := make(map[string]bool)
 	for _, n := range deferredNames {
@@ -378,10 +378,10 @@ func TestDeferredEndToEndDiscovery(t *testing.T) {
 		t.Errorf("expected both deferred tools in GetDeferredToolNames, got %v", deferredNames)
 	}
 
-	// Step 3: Discover one tool.
+	// 第 3 步：发现其中一个工具。
 	reg.MarkDiscovered("mcp__playwright__click")
 
-	// Step 4: The discovered tool should now appear in GetAllSchemas.
+	// 第 4 步：已发现的那个工具现在该出现在 GetAllSchemas 里。
 	schemas = reg.GetAllSchemas("anthropic")
 	foundClick := false
 	foundFill := false
@@ -403,7 +403,7 @@ func TestDeferredEndToEndDiscovery(t *testing.T) {
 		t.Errorf("expected 2 schemas (Bash + click), got %d", len(schemas))
 	}
 
-	// Step 5: GetDeferredToolNames should only return the undiscovered tool.
+	// 第 5 步：GetDeferredToolNames 只该返回还没发现的那个工具。
 	deferredNames = reg.GetDeferredToolNames()
 	if len(deferredNames) != 1 {
 		t.Errorf("expected 1 deferred tool remaining, got %d: %v", len(deferredNames), deferredNames)

@@ -206,7 +206,7 @@ func TestOpenAIThinkingEnabled(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
-		// minimal Responses API SSE
+		// 精简的 Responses API SSE
 		lines := []string{
 			`data: {"type":"response.output_text.delta","delta":"hi"}`,
 			`data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`,

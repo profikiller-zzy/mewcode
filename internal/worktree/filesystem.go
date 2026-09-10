@@ -1,12 +1,12 @@
-// Package worktree filesystem helpers: read git state without spawning git subprocesses.
+// Package worktree 文件系统辅助：在不启动 git 子进程的前提下读取 git 状态。
 //
-// Covers: resolving .git directories (including worktrees/submodules), parsing HEAD, resolving refs
-// via loose files and packed-refs.
+// 覆盖范围：解析 .git 目录（含 worktree/子模块）、解析 HEAD、通过
+// 松散文件和 packed-refs 解析 ref。
 //
-// Correctness notes (verified against git source):
-// HEAD: `ref: refs/heads/<branch>\n` or raw SHA (refs/files-backend.c)
-// Packed-refs: `<sha> <refname>\n`, skip `#` and `^` lines (packed-backend.c)
-// git file (worktree): `gitdir: <path>\n` with optional relative path (setup.c)
+// 正确性说明（已对照 git 源码核实）：
+// HEAD: `ref: refs/heads/<branch>\n` 或裸 SHA（refs/files-backend.c）
+// Packed-refs: `<sha> <refname>\n`，跳过 `#` 和 `^` 开头的行（packed-backend.c）
+// git 文件（worktree）：`gitdir: <path>\n`，路径可为相对路径（setup.c）
 package worktree
 
 import (
@@ -18,13 +18,13 @@ import (
 	"strings"
 )
 
-// safeRefName allows ASCII alphanumerics, '/', '.', '_', '+', '-', '@'. Used to validate ref/branch
-// names read from .git/ so a tampered HEAD or ref file can't inject path traversal, argument
-// prefixes, or shell metacharacters.
+// safeRefName 允许 ASCII 字母数字以及 '/'、'.'、'_'、'+'、'-'、'@'。用于校验从
+// .git/ 读到的 ref/分支名，这样被篡改的 HEAD 或 ref 文件就无法
+// 注入路径穿越、参数前缀或 shell 元字符。
 var safeRefName = regexp.MustCompile(`^[a-zA-Z0-9/._+@-]+$`)
 
-// IsSafeRefName validates that a ref/branch name is safe to use in path joins, as git positional
-// arguments, and when interpolated into shell commands.
+// IsSafeRefName 校验 ref/分支名是否可以安全地用于路径拼接、作为 git 位置参数，
+// 以及拼进 shell 命令。
 func IsSafeRefName(name string) bool {
 	if name == "" || strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") {
 		return false
@@ -32,7 +32,7 @@ func IsSafeRefName(name string) bool {
 	if strings.Contains(name, "..") {
 		return false
 	}
-	// Reject single-dot and empty path components.
+	// 拒绝单点（.）和空的路径分段。
 	for _, seg := range strings.Split(name, "/") {
 		if seg == "." || seg == "" {
 			return false
@@ -44,18 +44,18 @@ func IsSafeRefName(name string) bool {
 var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// IsValidGitSha reports whether s is a full-length SHA-1 (40 hex) or SHA-256 (64 hex) git object
-// id. Git never writes abbreviated SHAs to HEAD or ref files.
+// IsValidGitSha 判断 s 是否为完整长度的 SHA-1（40 位十六进制）或
+// SHA-256（64 位十六进制）git object id。git 从不往 HEAD 或 ref 文件里写缩写 SHA。
 func IsValidGitSha(s string) bool {
 	return sha1Pattern.MatchString(s) || sha256Pattern.MatchString(s)
 }
 
-// ResolveGitDir resolves the actual .git directory for a repo rooted at root. Handles
-// worktrees/submodules where .git is a file containing `gitdir: <path>`. Returns ("", nil) when
-// root has no .git entry (not a repo) — the caller treats empty as "not a git repo". Errors are
-// reserved for IO failures the caller cares about (here: only filesystem errors other than ENOENT).
+// ResolveGitDir 解析以 root 为根的仓库真正的 .git 目录。处理 .git
+// 是包含 `gitdir: <path>` 的文件的 worktree/子模块情况。当 root 下没有 .git
+// 条目（不是仓库）时返回 ("", nil) —— 调用方把空串当作「不是 git 仓库」。
+// 错误只留给调用方关心的 IO 失败（这里指除 ENOENT 之外的文件系统错误）。
 //
-// minus the memoization (Go callers cache at higher layers).
+// 去掉了记忆化（Go 的调用方在更上层做缓存）。
 func ResolveGitDir(root string) (string, error) {
 	gitPath := filepath.Join(root, ".git")
 	st, err := os.Stat(gitPath)
@@ -66,8 +66,8 @@ func ResolveGitDir(root string) (string, error) {
 		return "", err
 	}
 	if !st.IsDir() {
-		// Worktree or submodule: .git is a file with `gitdir: <path>`. Git strips trailing whitespace via
-		// strbuf_rtrim (setup.c read_gitfile_gently); strings.TrimSpace is equivalent.
+		// Worktree 或子模块：.git 是一个带 `gitdir: <path>` 的文件。git 通过
+		// strbuf_rtrim 去掉尾部空白（setup.c read_gitfile_gently）；strings.TrimSpace 与之等价。
 		raw, err := os.ReadFile(gitPath)
 		if err != nil {
 			return "", err
@@ -77,7 +77,7 @@ func ResolveGitDir(root string) (string, error) {
 			return "", nil
 		}
 		rel := strings.TrimSpace(strings.TrimPrefix(content, "gitdir:"))
-		// resolve relative to the root (where the .git pointer file lives).
+		// 相对于 root（.git 指针文件所在的目录）解析。
 		if filepath.IsAbs(rel) {
 			return rel, nil
 		}
@@ -86,9 +86,9 @@ func ResolveGitDir(root string) (string, error) {
 	return gitPath, nil
 }
 
-// GetCommonDir reads the `commondir` file inside a worktree's gitDir to find the shared git
-// directory. In a worktree, this points to the main repo's .git dir. Returns ("", nil) if no
-// commondir file exists (regular repo).
+// GetCommonDir 读取 worktree 的 gitDir 里的 `commondir` 文件，找出共享的 git
+// 目录。在 worktree 中，它指向主仓库的 .git 目录。
+// 若不存在 commondir 文件（普通仓库）则返回 ("", nil)。
 func GetCommonDir(gitDir string) (string, error) {
 	raw, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
@@ -104,22 +104,22 @@ func GetCommonDir(gitDir string) (string, error) {
 	return filepath.Clean(filepath.Join(gitDir, content)), nil
 }
 
-// gitHead is the parsed result of <gitDir>/HEAD.
+// gitHead 是 <gitDir>/HEAD 的解析结果。
 type gitHead struct {
-	// branch is non-empty when HEAD is on a branch.
+	// branch 在 HEAD 处于某个分支上时非空。
 	branch string
-	// sha is non-empty when HEAD is detached (raw SHA) or when an unusual symref has been resolved.
+	// sha 在 HEAD 处于 detached（裸 SHA）或某个非常规 symref 已被解析时非空。
 	sha string
 }
 
-// readGitHead parses <gitDir>/HEAD to determine current branch or detached SHA. Returns (nil, nil)
-// when HEAD doesn't exist or is malformed — callers treat that as "not a worktree" / "not a repo".
-// IO errors other than ENOENT propagate.
+// readGitHead 解析 <gitDir>/HEAD，判断当前分支或 detached 的 SHA。当 HEAD 不存在
+// 或格式损坏时返回 (nil, nil) —— 调用方把它当作「不是 worktree」/「不是仓库」。
+// 除 ENOENT 之外的 IO 错误会向上传递。
 //
-// HEAD format (per refs/files-backend.c):
-// `ref: refs/heads/<branch>\n` — on a branch
-// `ref: <other-ref>\n` — unusual symref (e.g. during bisect)
-// `<hex-sha>\n` — detached HEAD (e.g. during rebase)
+// HEAD 格式（依据 refs/files-backend.c）：
+// `ref: refs/heads/<branch>\n` —— 在分支上
+// `ref: <other-ref>\n` —— 非常规 symref（例如 bisect 期间）
+// `<hex-sha>\n` —— detached HEAD（例如 rebase 期间）
 func readGitHead(gitDir string) (*gitHead, error) {
 	raw, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
@@ -138,7 +138,7 @@ func readGitHead(gitDir string) (*gitHead, error) {
 			}
 			return &gitHead{branch: name}, nil
 		}
-		// Unusual symref (not a local branch) — resolve to SHA.
+		// 非常规 symref（不是本地分支）—— 解析成 SHA。
 		if !IsSafeRefName(ref) {
 			return nil, nil
 		}
@@ -148,19 +148,19 @@ func readGitHead(gitDir string) (*gitHead, error) {
 		}
 		return &gitHead{sha: sha}, nil
 	}
-	// Raw SHA (detached HEAD). Validate so a tampered HEAD can't flow shell metacharacters into
-	// downstream contexts.
+	// 裸 SHA（detached HEAD）。做校验是为了防止被篡改的 HEAD
+	// 把 shell 元字符带进下游场景。
 	if !IsValidGitSha(content) {
 		return nil, nil
 	}
 	return &gitHead{sha: content}, nil
 }
 
-// ResolveRef resolves a git ref (e.g. `refs/heads/main`) to a commit SHA. Checks loose ref files
-// first, then falls back to packed-refs. Follows symrefs (e.g. `ref: refs/remotes/origin/main`).
+// ResolveRef 把 git ref（例如 `refs/heads/main`）解析成 commit SHA。先查松散 ref
+// 文件，再回退到 packed-refs。会跟随 symref（例如 `ref: refs/remotes/origin/main`）。
 //
-// For worktrees, refs live in the common gitdir (pointed to by the `commondir` file), not the
-// worktree-specific gitdir. We check the worktree gitdir first, then fall back to the common dir.
+// 对 worktree 来说，ref 位于公共 gitdir（`commondir` 文件指向的目录）里，
+// 而不是 worktree 自己的 gitdir。我们先查 worktree 的 gitdir，再回退到公共目录。
 func ResolveRef(gitDir, ref string) (string, error) {
 	sha, err := resolveRefInDir(gitDir, ref)
 	if err != nil {
@@ -179,9 +179,9 @@ func ResolveRef(gitDir, ref string) (string, error) {
 	return "", nil
 }
 
-// resolveRefInDir resolves ref within a single git directory (no commonDir fallback).
+// resolveRefInDir 在单个 git 目录内解析 ref（不做 commonDir 回退）。
 func resolveRefInDir(dir, ref string) (string, error) {
-	// Try loose ref file first.
+	// 先试松散 ref 文件。
 	raw, err := os.ReadFile(filepath.Join(dir, ref))
 	if err == nil {
 		content := strings.TrimSpace(string(raw))
@@ -190,8 +190,8 @@ func resolveRefInDir(dir, ref string) (string, error) {
 			if !IsSafeRefName(target) {
 				return "", nil
 			}
-			// Recurse to follow the symref chain. Pass `dir` (not gitDir) so resolveRef's commonDir fallback
-			// applies from the same starting point.
+			// 递归跟随 symref 链。传 `dir`（而不是 gitDir），这样 resolveRef 的
+			// commonDir 回退才会从同一个起点开始。
 			return ResolveRef(dir, target)
 		}
 		if !IsValidGitSha(content) {
@@ -203,7 +203,7 @@ func resolveRefInDir(dir, ref string) (string, error) {
 		return "", err
 	}
 
-	// Fall back to packed-refs.
+	// 回退到 packed-refs。
 	packed, err := os.ReadFile(filepath.Join(dir, "packed-refs"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -230,9 +230,9 @@ func resolveRefInDir(dir, ref string) (string, error) {
 	return "", nil
 }
 
-// ReadRawSymref reads a raw symref file and extracts the branch name after a known prefix. Returns
-// ("", nil) if the ref doesn't exist, isn't a symref, or doesn't match the prefix. Checks loose
-// file only — packed-refs doesn't store symrefs.
+// ReadRawSymref 读取原始 symref 文件，提取已知前缀之后的分支名。若 ref
+// 不存在、不是 symref 或不匹配前缀，则返回 ("", nil)。
+// 只检查松散文件 —— packed-refs 不存 symref。
 func ReadRawSymref(gitDir, refPath, branchPrefix string) (string, error) {
 	raw, err := os.ReadFile(filepath.Join(gitDir, refPath))
 	if err != nil {
@@ -256,11 +256,11 @@ func ReadRawSymref(gitDir, refPath, branchPrefix string) (string, error) {
 	return name, nil
 }
 
-// GetDefaultBranch determines the repo's default branch by reading refs/remotes/origin/HEAD (a
-// symref) from the common gitdir, falling back to trying `main` then `master`, and finally
-// returning "main".
+// GetDefaultBranch 通过从公共 gitdir 读取 refs/remotes/origin/HEAD（一个 symref）
+// 来确定仓库的默认分支，回退策略是依次尝试 `main` 和 `master`，
+// 最后兜底返回 "main"。
 //
-// Reads purely from the filesystem — no git subprocess, no network.
+// 纯文件系统读取 —— 不启动 git 子进程，不联网。
 func GetDefaultBranch(repoRoot string) (string, error) {
 	gitDir, err := ResolveGitDir(repoRoot)
 	if err != nil {
@@ -269,7 +269,7 @@ func GetDefaultBranch(repoRoot string) (string, error) {
 	if gitDir == "" {
 		return "main", nil
 	}
-	// refs/remotes/ lives in commonDir, not the per-worktree gitDir.
+	// refs/remotes/ 位于 commonDir，而不在每个 worktree 自己的 gitDir 里。
 	commonDir, err := GetCommonDir(gitDir)
 	if err != nil {
 		return "main", err
@@ -296,9 +296,9 @@ func GetDefaultBranch(repoRoot string) (string, error) {
 	return "main", nil
 }
 
-// GetCurrentBranch reads <repoRoot>/.git/HEAD and returns the current branch name, or "" when HEAD
-// is detached. Pure filesystem read; (but distinguishes detached HEAD via empty string instead of
-// the sentinel "HEAD").
+// GetCurrentBranch 读取 <repoRoot>/.git/HEAD 并返回当前分支名，HEAD 处于
+// detached 时返回 ""。纯文件系统读取；（用空串
+// 而不是哨兵值 "HEAD" 来区分 detached HEAD）。
 func GetCurrentBranch(repoRoot string) (string, error) {
 	gitDir, err := ResolveGitDir(repoRoot)
 	if err != nil || gitDir == "" {
@@ -311,13 +311,13 @@ func GetCurrentBranch(repoRoot string) (string, error) {
 	return head.branch, nil
 }
 
-// ReadWorktreeHeadSha reads the HEAD SHA for a git worktree directory (not the main repo). Unlike
-// ResolveGitDir+readGitHead chained, this reads `<worktreePath>/.git` directly as a `gitdir:`
-// pointer file, with no upward walk. Returns ("", nil) when the worktree doesn't exist (`.git`
-// pointer ENOENT) or is malformed; callers treat empty as "not a valid worktree".
+// ReadWorktreeHeadSha 读取 git worktree 目录（不是主仓库）的 HEAD SHA。与
+// ResolveGitDir+readGitHead 串联不同，它直接把 `<worktreePath>/.git` 当作
+// `gitdir:` 指针文件读取，不做向上遍历。当 worktree 不存在（`.git`
+// 指针 ENOENT）或格式损坏时返回 ("", nil)；调用方把空串当作「不是合法的 worktree」。
 //
-// Target perf: ≤10ms (pure filesystem reads, no subprocess). On a 16M-object repo `git rev-parse
-// HEAD` would burn ~15ms on spawn overhead alone.
+// 性能目标：≤10ms（纯文件系统读取，无子进程）。在 1600 万 object 的仓库上，
+// `git rev-parse HEAD` 光进程启动开销就要 ~15ms。
 func ReadWorktreeHeadSha(worktreePath string) (string, error) {
 	raw, err := os.ReadFile(filepath.Join(worktreePath, ".git"))
 	if err != nil {

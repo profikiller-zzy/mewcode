@@ -8,24 +8,24 @@ import (
 	"strings"
 )
 
-// performPostCreationSetup propagates settings, hooks, symlinks, and gitignored files from the main
-// repo into a newly created worktree.
+// performPostCreationSetup 把主仓库里的 settings、hooks、符号链接以及
+// 被 gitignore 的文件同步到新建的 worktree 中。
 func performPostCreationSetup(ctx context.Context, repoRoot, worktreePath string) {
-	// A. Copy settings.local.json.
+	// A. 复制 settings.local.json。
 	copySettingsLocal(repoRoot, worktreePath)
 
-	// B. Configure git hooks path.
+	// B. 配置 git hooks 路径。
 	configureHooksPath(ctx, repoRoot, worktreePath)
 
-	// C. Symlink large directories (opt-in via config).
+	// C. 为大目录创建符号链接（通过配置开启）。
 	symlinkDirectories(repoRoot, worktreePath, getSymlinkDirectories())
 
-	// D. Copy gitignored files from .worktreeinclude.
+	// D. 从 .worktreeinclude 复制被 gitignore 的文件。
 	CopyWorktreeIncludeFiles(ctx, repoRoot, worktreePath)
 }
 
-// copySettingsLocal copies .mewcode/settings.local.json from the main repo to the worktree. This
-// propagates local settings (which may contain secrets).
+// copySettingsLocal 把主仓库的 .mewcode/settings.local.json 复制到 worktree。
+// 这样可以把本地设置（可能包含密钥）同步过去。
 func copySettingsLocal(repoRoot, worktreePath string) {
 	relPath := filepath.Join(".mewcode", "settings.local.json")
 	src := filepath.Join(repoRoot, relPath)
@@ -33,7 +33,7 @@ func copySettingsLocal(repoRoot, worktreePath string) {
 
 	srcData, err := os.ReadFile(src)
 	if err != nil {
-		return // ENOENT is fine — no local settings to copy
+		return // ENOENT 没关系 —— 本来就没有本地设置要复制
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return
@@ -41,8 +41,8 @@ func copySettingsLocal(repoRoot, worktreePath string) {
 	_ = os.WriteFile(dst, srcData, 0o644)
 }
 
-// configureHooksPath sets core.hooksPath in the worktree so git hooks from the main repo are
-// shared. Prioritizes .husky/ over .git/hooks/.
+// configureHooksPath 在 worktree 里设置 core.hooksPath，让主仓库的 git hooks
+// 可以共用。优先使用 .husky/，其次才是 .git/hooks/。
 func configureHooksPath(ctx context.Context, repoRoot, worktreePath string) {
 	candidates := []string{
 		filepath.Join(repoRoot, ".husky"),
@@ -61,38 +61,38 @@ func configureHooksPath(ctx context.Context, repoRoot, worktreePath string) {
 	}
 	_, _, code := runGit(ctx, worktreePath, "config", "core.hooksPath", hooksPath)
 	if code != 0 {
-		// best-effort — don't fail the whole setup.
+		// 尽力而为 —— 不要因为这一步失败就让整个 setup 挂掉。
 		return
 	}
 }
 
-// symlinkDirectories creates symlinks from repoRoot dirs into worktreePath to avoid disk bloat
-// (e.g. node_modules, vendor).
+// symlinkDirectories 把 repoRoot 下的目录以符号链接的方式挂到 worktreePath，
+// 避免磁盘膨胀（比如 node_modules、vendor）。
 func symlinkDirectories(repoRoot, worktreePath string, dirs []string) {
 	for _, dir := range dirs {
 		if strings.Contains(dir, "..") {
-			continue // path traversal guard
+			continue // 防止路径穿越
 		}
 		src := filepath.Join(repoRoot, dir)
 		dst := filepath.Join(worktreePath, dir)
-		// symlink is best-effort: source may not exist, dest may already exist.
+		// 建符号链接是尽力而为：源可能不存在，目标可能已经存在。
 		_ = os.Symlink(src, dst)
 	}
 }
 
-// getSymlinkDirectories returns the configured list of directories to symlink. Configured via
-// settings.worktree.symlinkDirectories. We read from config if available; empty by default.
+// getSymlinkDirectories 返回配置好的需要建符号链接的目录列表。
+// 通过 settings.worktree.symlinkDirectories 配置；能读到配置就读，默认为空。
 func getSymlinkDirectories() []string {
 	return worktreeConfig.SymlinkDirectories
 }
 
-// CopyWorktreeIncludeFiles copies gitignored files specified in .worktreeinclude from the base repo
-// to the worktree. Uses gitignore-syntax patterns.
+// CopyWorktreeIncludeFiles 把 .worktreeinclude 里指定的、被 gitignore 的文件
+// 从基础仓库复制到 worktree。使用 gitignore 语法的模式匹配。
 func CopyWorktreeIncludeFiles(ctx context.Context, repoRoot, worktreePath string) ([]string, error) {
 	includeFile := filepath.Join(repoRoot, ".worktreeinclude")
 	data, err := os.ReadFile(includeFile)
 	if err != nil {
-		return nil, nil // no .worktreeinclude → nothing to copy
+		return nil, nil // 没有 .worktreeinclude → 没有要复制的东西
 	}
 
 	var patterns []string
@@ -107,7 +107,7 @@ func CopyWorktreeIncludeFiles(ctx context.Context, repoRoot, worktreePath string
 		return nil, nil
 	}
 
-	// List gitignored files using git ls-files.
+	// 用 git ls-files 列出被 gitignore 的文件。
 	stdout, _, code := runGit(ctx, repoRoot,
 		"ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
 	if code != 0 || strings.TrimSpace(stdout) == "" {
@@ -116,14 +116,14 @@ func CopyWorktreeIncludeFiles(ctx context.Context, repoRoot, worktreePath string
 
 	entries := strings.Split(strings.TrimSpace(stdout), "\n")
 
-	// Simple pattern matching: for each gitignored file, check if any .worktreeinclude pattern matches
-	// it. We use filepath.Match for basic glob matching and prefix matching for directory patterns.
+	// 简单的模式匹配：对每个被 gitignore 的文件，检查是否有 .worktreeinclude
+	// 里的模式能匹配上。基础 glob 匹配用 filepath.Match，目录模式用前缀匹配。
 	var toCopy []string
 	for _, entry := range entries {
 		if entry == "" {
 			continue
 		}
-		// Skip collapsed directories (trailing /).
+		// 跳过折叠的目录（以 / 结尾的）。
 		if strings.HasSuffix(entry, "/") {
 			continue
 		}
@@ -147,25 +147,25 @@ func CopyWorktreeIncludeFiles(ctx context.Context, repoRoot, worktreePath string
 	return copied, nil
 }
 
-// matchesWorktreeInclude checks whether a file path matches any of the .worktreeinclude patterns.
-// Supports exact match, basename match, and basic glob patterns.
+// matchesWorktreeInclude 检查某个文件路径是否匹配 .worktreeinclude 里的任一模式。
+// 支持精确匹配、basename 匹配以及基础 glob 模式。
 func matchesWorktreeInclude(path string, patterns []string) bool {
 	base := filepath.Base(path)
 	for _, p := range patterns {
 		p = strings.TrimPrefix(p, "/")
-		// Exact match.
+		// 精确匹配。
 		if p == path || p == base {
 			return true
 		}
-		// Glob match against full path.
+		// 对完整路径做 glob 匹配。
 		if matched, _ := filepath.Match(p, path); matched {
 			return true
 		}
-		// Glob match against basename.
+		// 对 basename 做 glob 匹配。
 		if matched, _ := filepath.Match(p, base); matched {
 			return true
 		}
-		// Prefix match for directory patterns.
+		// 目录模式的前缀匹配。
 		if strings.HasSuffix(p, "/") && strings.HasPrefix(path, p) {
 			return true
 		}
@@ -188,16 +188,16 @@ func copyFileContents(src, dst string) error {
 	return err
 }
 
-// WorktreeConfig holds worktree-related configuration. Populated from config.yaml or defaults.
+// WorktreeConfig 保存 worktree 相关配置。从 config.yaml 或默认值填充。
 var worktreeConfig = struct {
 	SymlinkDirectories    []string
-	StaleCleanupInterval  int // seconds; 0 = disabled
-	StaleCutoffHours      int // hours; default 720 (30 days)
+	StaleCleanupInterval  int // 单位秒；0 = 关闭
+	StaleCutoffHours      int // 单位小时；默认 720（30 天）
 }{
 	StaleCutoffHours: 720,
 }
 
-// SetWorktreeConfig allows the TUI/CLI startup to inject config values.
+// SetWorktreeConfig 让 TUI/CLI 启动时可以注入配置值。
 func SetWorktreeConfig(symlinkDirs []string, cleanupIntervalSec, cutoffHours int) {
 	worktreeConfig.SymlinkDirectories = symlinkDirs
 	worktreeConfig.StaleCleanupInterval = cleanupIntervalSec
@@ -206,30 +206,30 @@ func SetWorktreeConfig(symlinkDirs []string, cleanupIntervalSec, cutoffHours int
 	}
 }
 
-// GetStaleCutoffHours returns the configured cutoff in hours.
+// GetStaleCutoffHours 返回配置的过期阈值，单位为小时。
 func GetStaleCutoffHours() int {
 	return worktreeConfig.StaleCutoffHours
 }
 
-// GetStaleCleanupInterval returns the configured cleanup interval in seconds.
+// GetStaleCleanupInterval 返回配置的清理间隔，单位为秒。
 func GetStaleCleanupInterval() int {
 	return worktreeConfig.StaleCleanupInterval
 }
 
-// FindCanonicalGitRoot resolves through worktrees to find the main repo root. When called from
-// inside a worktree, follows the .git pointer to commondir.
+// FindCanonicalGitRoot 穿透 worktree 找到主仓库根目录。
+// 在 worktree 内部调用时，会顺着 .git 指针找到 commondir。
 func FindCanonicalGitRoot(startDir string) string {
 	gitDir, err := ResolveGitDir(startDir)
 	if err != nil || gitDir == "" {
 		return ""
 	}
-	// If gitDir contains a commondir pointer, follow it to the main repo.
+	// 如果 gitDir 里有 commondir 指针，顺着它找到主仓库。
 	commonDir, err := GetCommonDir(gitDir)
 	if err != nil || commonDir == "" {
-		// gitDir is the main .git dir; repo root is its parent.
+		// gitDir 就是主仓库的 .git 目录；仓库根目录是它的上一级。
 		return filepath.Dir(gitDir)
 	}
-	// commonDir points to the main repo's .git; repo root is its parent.
+	// commonDir 指向主仓库的 .git；仓库根目录是它的上一级。
 	return filepath.Dir(commonDir)
 }
 

@@ -7,17 +7,17 @@ import (
 	"mewcode/internal/tools"
 )
 
-// InstallSkillTool lets the model install a new Skill on demand from a
-// skills.sh / github.com URL the user provides.
+// InstallSkillTool 让模型按需从用户提供的
+// skills.sh / github.com URL 安装一个新 Skill。
 //
-// The OnInstalled callback is fired after a successful install with the
-// new skill's name; the TUI uses it to re-register the slash command so
-// `/<new-skill>` works without a restart.
+// 安装成功后会触发 OnInstalled 回调，带上新 skill 的名字；
+// TUI 用它重新注册 slash 命令，
+// 这样不用重启就能用 `/<new-skill>`。
 type InstallSkillTool struct {
 	Catalog     *Catalog
 	OnInstalled func(name string)
-	// InstallRoot overrides ~/.mewcode/skills for tests. Empty = derive
-	// from UserSkillsRoot at call time.
+	// InstallRoot 为测试覆盖 ~/.mewcode/skills。
+	// 留空表示调用时再从 UserSkillsRoot 推导。
 	InstallRoot string
 }
 
@@ -74,8 +74,8 @@ func (t *InstallSkillTool) Execute(_ context.Context, args map[string]any) tools
 		return tools.ToolResult{Output: fmt.Sprintf("install failed: %v", err), IsError: true}
 	}
 
-	// Refresh the catalog so the new skill's frontmatter is indexed and
-	// reachable via LoadSkill without a restart.
+	// 刷新 catalog，让新 skill 的 frontmatter 被索引到，
+	// 不用重启就能通过 LoadSkill 取到。
 	if t.Catalog != nil {
 		t.Catalog.Reload(t.Catalog.workDir)
 	}

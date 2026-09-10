@@ -13,30 +13,30 @@ import (
 	"time"
 )
 
-// SkillSource describes where to pull a skill from. Always normalises down
-// to a GitHub Contents API path because skills.sh is just a registry that
-// points at GitHub trees.
+// SkillSource 描述从何处拉取 skill。最终都会归一化为
+// GitHub Contents API 的路径，因为 skills.sh 只是一个
+// 指向 GitHub 目录树的注册表。
 type SkillSource struct {
 	Owner    string
 	Repo     string
-	Ref      string // branch or tag; "main" when unspecified
-	Subpath  string // path within the repo to the skill dir (no trailing /)
-	Name     string // skill name (== last segment of Subpath)
-	Original string // user-supplied URL, for error messages
+	Ref      string // 分支或 tag；未指定时为 "main"
+	Subpath  string // skill 目录在仓库内的路径（不带结尾的 /）
+	Name     string // skill 名称（== Subpath 的最后一段）
+	Original string // 用户提供的原始 URL，用于报错信息
 }
 
-// ParseSkillURL accepts three URL shapes:
+// ParseSkillURL 接受三种 URL 形式：
 //
 //  1. https://www.skills.sh/<owner>/<repo>/<skill-name>
-//     — assumes the skill lives at "skills/<skill-name>" in the repo
-//     (anthropics/skills convention)
+//     — 假定 skill 位于仓库里的 "skills/<skill-name>"
+//     （anthropics/skills 的约定）
 //  2. https://github.com/<owner>/<repo>/tree/<ref>/<subpath>
-//     — direct subtree URL; last segment is the skill name
+//     — 直接指向子树的 URL；最后一段是 skill 名称
 //  3. https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<subpath>/SKILL.md
-//     — raw file URL; treat parent dir as the skill subpath
+//     — 原始文件 URL；把上级目录当作 skill 的子路径
 //
-// Returns a fully-resolved SkillSource, or an error if the URL doesn't
-// match any of the three shapes.
+// 返回一个完全解析好的 SkillSource；三种形式都不匹配时返回错误。
+//
 func ParseSkillURL(raw string) (*SkillSource, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -62,7 +62,7 @@ func ParseSkillURL(raw string) (*SkillSource, error) {
 		}, nil
 
 	case "github.com":
-		// Expected: /<owner>/<repo>/tree/<ref>/<...subpath>
+		// 期望格式：/<owner>/<repo>/tree/<ref>/<...subpath>
 		if len(parts) < 5 || parts[2] != "tree" {
 			return nil, fmt.Errorf("github.com URL must be /<owner>/<repo>/tree/<ref>/<subpath>")
 		}
@@ -77,11 +77,11 @@ func ParseSkillURL(raw string) (*SkillSource, error) {
 		}, nil
 
 	case "raw.githubusercontent.com":
-		// Expected: /<owner>/<repo>/<ref>/<...subpath>/SKILL.md
+		// 期望格式：/<owner>/<repo>/<ref>/<...subpath>/SKILL.md
 		if len(parts) < 4 {
 			return nil, fmt.Errorf("raw.githubusercontent.com URL too short")
 		}
-		// Strip trailing filename so Subpath ends at the skill dir.
+		// 去掉结尾的文件名，让 Subpath 停在 skill 目录这一层。
 		subParts := parts[3:]
 		if last := subParts[len(subParts)-1]; strings.Contains(last, ".") {
 			subParts = subParts[:len(subParts)-1]
@@ -101,9 +101,9 @@ func ParseSkillURL(raw string) (*SkillSource, error) {
 	return nil, fmt.Errorf("unsupported host %q (try skills.sh or github.com)", u.Host)
 }
 
-// contentEntry holds the subset of the GitHub Contents API response we
-// care about. Type is "file" | "dir" | "symlink" | "submodule"; we only
-// follow files and dirs.
+// contentEntry 只保留 GitHub Contents API 返回里我们关心的那部分字段。
+// Type 取值为 "file" | "dir" | "symlink" | "submodule"；我们只
+// 处理 file 和 dir。
 type contentEntry struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
@@ -114,22 +114,22 @@ type contentEntry struct {
 	Size        int    `json:"size"`
 }
 
-// installLimits caps how much data we'll pull from a remote source.
-// Single-skill installs are tiny (SKILL.md + maybe a few reference files);
-// anything bigger probably means we got a wrong URL or a bad actor.
+// installLimits 限制从远端拉取的数据量。单个 skill 的安装体积很小
+// （SKILL.md 外加可能几个参考文件）；再大就说明 URL 填错了
+// 或者对方不怀好意。
 const (
-	maxFileSize     = 1 << 20 // 1 MiB per file
-	maxTotalSize    = 8 << 20 // 8 MiB per skill
+	maxFileSize     = 1 << 20 // 每个文件 1 MiB
+	maxTotalSize    = 8 << 20 // 每个 skill 8 MiB
 	maxFileCount    = 64
 	maxRecursionDepth = 4
 	httpTimeout     = 30 * time.Second
 )
 
-// fetcher centralises HTTP calls so tests can swap the underlying client
-// and so we apply consistent headers and timeouts.
+// fetcher 把 HTTP 调用集中到一处，方便测试替换底层 client，
+// 也保证 header 和 timeout 的处理一致。
 type fetcher struct {
 	client *http.Client
-	apiBase string // "https://api.github.com" — overridable for tests
+	apiBase string // "https://api.github.com" —— 测试时可覆盖
 }
 
 func newFetcher() *fetcher {
@@ -151,7 +151,7 @@ func (f *fetcher) listContents(src *SkillSource, subpath string) ([]contentEntry
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden {
-		// Rate-limited; surface the body so user sees the GitHub error msg.
+		// 被限流了；把响应体抛出来，让用户看到 GitHub 的报错信息。
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("github API forbidden (rate-limited?): %s", strings.TrimSpace(string(body)))
 	}
@@ -159,8 +159,8 @@ func (f *fetcher) listContents(src *SkillSource, subpath string) ([]contentEntry
 		return nil, fmt.Errorf("github API returned %d for %s", resp.StatusCode, endpoint)
 	}
 
-	// The endpoint returns an array for directories and a single object for
-	// files. Decode into a generic value and dispatch.
+	// 该 endpoint 对目录返回数组、对文件返回单个对象。
+	// 先解码成通用值，再按类型分别处理。
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxFileSize))
 	if err != nil {
 		return nil, fmt.Errorf("read contents response: %w", err)
@@ -183,9 +183,9 @@ func (f *fetcher) listContents(src *SkillSource, subpath string) ([]contentEntry
 	return []contentEntry{single}, nil
 }
 
-// fetchBlob downloads a single file's bytes. Prefers the inlined base64
-// `content` field when present (cheaper than a second round-trip) and
-// falls back to download_url for binaries / files >1MB.
+// fetchBlob 下载单个文件的字节。优先用内联的 base64
+// `content` 字段（少一次往返，更省），
+// 二进制文件或大于 1MB 的文件则回退到 download_url。
 func (f *fetcher) fetchBlob(e contentEntry) ([]byte, error) {
 	if e.Size > maxFileSize {
 		return nil, fmt.Errorf("file %s too large: %d bytes (max %d)", e.Path, e.Size, maxFileSize)
@@ -214,8 +214,8 @@ func (f *fetcher) fetchBlob(e contentEntry) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, maxFileSize))
 }
 
-// InstallReport summarises what an Install call did, returned by the tool
-// for display and consumed by tests.
+// InstallReport 汇总一次 Install 调用的成果，由工具返回用于展示，
+// 测试里也会读它。
 type InstallReport struct {
 	SkillName  string
 	TargetDir  string
@@ -223,13 +223,13 @@ type InstallReport struct {
 	TotalBytes int64
 }
 
-// Install pulls the skill at src into installRoot/<src.Name>/. installRoot
-// is expected to be the user-global skills tier (~/.mewcode/skills/) so
-// installs are reused across projects.
+// Install 把 src 指向的 skill 拉取到 installRoot/<src.Name>/。installRoot
+// 应当是用户级的 skills 层（~/.mewcode/skills/），
+// 这样安装结果可以跨项目复用。
 //
-// Writes are atomic at the directory level: we first stage into a sibling
-// tempdir, then rename into place. Partial failures leave installRoot
-// unchanged.
+// 写入在目录级别是原子的：先落到同级的临时目录，再 rename 到位。
+// 中途失败
+// 不会改动 installRoot。
 func Install(src *SkillSource, installRoot string) (*InstallReport, error) {
 	return installWith(newFetcher(), src, installRoot)
 }
@@ -262,8 +262,8 @@ func installWith(f *fetcher, src *SkillSource, installRoot string) (*InstallRepo
 
 	final := filepath.Join(installRoot, src.Name)
 	if _, err := os.Stat(final); err == nil {
-		// Overwrite an existing install by removing it first. The user
-		// explicitly asked to install — assume they want the latest.
+		// 先删掉已有安装再覆盖。用户是明确要求安装的 ——
+		// 认为他想要最新版本。
 		if err := os.RemoveAll(final); err != nil {
 			cleanupStaging()
 			return nil, fmt.Errorf("remove old install: %w", err)
@@ -277,8 +277,8 @@ func installWith(f *fetcher, src *SkillSource, installRoot string) (*InstallRepo
 	return report, nil
 }
 
-// walkAndDownload reproduces the on-GitHub directory tree under localDir,
-// counting files + bytes against the install limits.
+// walkAndDownload 在 localDir 下还原 GitHub 上的目录树，
+// 同时按安装上限统计文件数和字节数。
 func walkAndDownload(f *fetcher, src *SkillSource, subpath, localDir string, report *InstallReport, depth int) error {
 	if depth > maxRecursionDepth {
 		return fmt.Errorf("install tree too deep (>%d levels)", maxRecursionDepth)
@@ -291,8 +291,8 @@ func walkAndDownload(f *fetcher, src *SkillSource, subpath, localDir string, rep
 		if report.FileCount >= maxFileCount {
 			return fmt.Errorf("install file count limit (%d) reached", maxFileCount)
 		}
-		// `Name` is the leaf — guard against path traversal even though
-		// the GitHub API won't ever emit "../" itself.
+		// `Name` 是叶子节点 —— 即便 GitHub API 自己不会吐出 "../"，
+		// 也要防住路径穿越。
 		if strings.Contains(e.Name, "..") || strings.ContainsAny(e.Name, "/\\") {
 			return fmt.Errorf("suspicious entry name: %q", e.Name)
 		}
@@ -319,16 +319,16 @@ func walkAndDownload(f *fetcher, src *SkillSource, subpath, localDir string, rep
 				return err
 			}
 		default:
-			// Skip symlinks / submodules silently — they shouldn't appear
-			// in a well-formed skill.
+			// 静默跳过 symlink / submodule ——
+			// 结构正常的 skill 里不该出现它们。
 		}
 	}
 	return nil
 }
 
-// hasSkillManifest verifies the staged tree contains a SKILL.md or
-// skill.yaml at its root. Pre-flight guard against a "URL pointed at the
-// wrong subdir" mistake.
+// hasSkillManifest 检查暂存目录树的根上是否有 SKILL.md 或
+// skill.yaml。这是事前防护，用来拦住
+// 「URL 指到了错误的子目录」这类失误。
 func hasSkillManifest(dir string) bool {
 	for _, name := range []string{"SKILL.md", "skill.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
@@ -338,8 +338,8 @@ func hasSkillManifest(dir string) bool {
 	return false
 }
 
-// validateSkillName allows kebab-case and snake_case; disallows path
-// traversal, leading dots, and anything that'd surprise a shell.
+// validateSkillName 允许 kebab-case 和 snake_case；禁止路径穿越、
+// 开头是点，以及任何会让 shell 意外的字符。
 func validateSkillName(name string) error {
 	if name == "" {
 		return fmt.Errorf("empty skill name")
@@ -359,8 +359,8 @@ func validateSkillName(name string) error {
 	return nil
 }
 
-// UserSkillsRoot returns ~/.mewcode/skills, creating the parent if needed
-// so callers don't have to repeat the dance.
+// UserSkillsRoot 返回 ~/.mewcode/skills，必要时先把目录建好，
+// 省得调用方各自再走一遍这套流程。
 func UserSkillsRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

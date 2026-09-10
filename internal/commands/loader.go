@@ -8,22 +8,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// CommandMeta is the frontmatter for a file-based prompt command. Holds the subset of fields read
-// for legacy /commands/ files: description, argument-hint, aliases.
+// CommandMeta 是基于文件的 prompt command 的 frontmatter。只保留为旧版
+// /commands/ 文件读取的那几个字段：description、argument-hint、aliases。
 type CommandMeta struct {
 	Description  string   `yaml:"description"`
 	ArgumentHint string   `yaml:"argument-hint"`
 	Aliases      []string `yaml:"aliases"`
 }
 
-// LoadDir scans dir for *.md files (recursive) and returns one Command per file. The command name
-// is derived from the file's path relative to dir, with subdirectories joined by ':' for original
-// namespacing rule (sub/dir/foo.md → "sub:dir:foo"). Files that fail to parse are silently skipped
-// (a malformed user command should not break startup).
+// LoadDir 递归扫描 dir 下的 *.md 文件，每个文件返回一个 Command。命令名由
+// 文件相对于 dir 的路径推导而来，子目录按最初的命名空间规则
+// 用 ':' 连接（sub/dir/foo.md → "sub:dir:foo"）。解析失败的文件会被静默跳过
+// （一个写坏的用户命令不应该让启动失败）。
 //
-// Each returned command has Type=TypePrompt and a Handler that returns the markdown body with
-// $ARGUMENTS substituted. If the body has no $ARGUMENTS placeholder and args is non-empty, the args
-// are appended in a "## User Request" section.
+// 返回的每个命令都带 Type=TypePrompt，以及一个把 markdown 正文中的
+// $ARGUMENTS 替换掉的 Handler。如果正文里没有 $ARGUMENTS 占位符而 args 非空，
+// args 会被追加到一个 "## User Request" 小节里。
 func LoadDir(dir string) []*Command {
 	if dir == "" {
 		return nil
@@ -50,10 +50,10 @@ func LoadDir(dir string) []*Command {
 	return cmds
 }
 
-// LoadUserCommands merges file-based commands from two search paths: 1. ~/.mewcode/commands/ (user
-// global) 2. $workDir/.mewcode/commands/ (project).
+// LoadUserCommands 合并两个搜索路径下基于文件的命令：
+// 1. ~/.mewcode/commands/（用户全局）2. $workDir/.mewcode/commands/（项目级）。
 //
-// Later sources override earlier ones on name collision.
+// 名字冲突时，后加载的覆盖先加载的。
 func LoadUserCommands(workDir string) []*Command {
 	var dirs []string
 	if home, err := os.UserHomeDir(); err == nil {
@@ -81,9 +81,9 @@ func LoadUserCommands(workDir string) []*Command {
 	return out
 }
 
-// parseCommandFile reads a single .md file and returns the matching Command, or nil on read/parse
-// failure. The name is computed from the relative path: "git/log.md" under baseDir → "git:log".
-// Names are lowercased to match the /<name> lookup convention in Parse.
+// parseCommandFile 读取单个 .md 文件并返回对应的 Command，读取或解析失败时
+// 返回 nil。名字由相对路径算出：baseDir 下的 "git/log.md" → "git:log"。
+// 名字会转成小写，以匹配 Parse 中 /<name> 的查找约定。
 func parseCommandFile(baseDir, path string) *Command {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -119,9 +119,9 @@ func parseCommandFile(baseDir, path string) *Command {
 	}
 }
 
-// splitFrontmatter separates YAML frontmatter from the markdown body. Returns an empty meta and the
-// original content if no frontmatter is present or it fails to parse — a malformed command file
-// should not break startup.
+// splitFrontmatter 把 YAML frontmatter 和 markdown 正文分开。
+// 如果没有 frontmatter 或解析失败，就返回空的 meta 和原始内容 ——
+// 一个写坏的命令文件不应该让启动失败。
 func splitFrontmatter(content string) (CommandMeta, string) {
 	var meta CommandMeta
 	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
@@ -137,8 +137,8 @@ func splitFrontmatter(content string) (CommandMeta, string) {
 	return meta, parts[2]
 }
 
-// firstNonHeaderLine returns the first non-empty, non-heading line — used as a description fallback
-// when frontmatter doesn't supply one.
+// firstNonHeaderLine 返回第一行非空、非标题的行 —— 当 frontmatter
+// 没有提供 description 时用作兜底。
 func firstNonHeaderLine(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
@@ -150,8 +150,8 @@ func firstNonHeaderLine(body string) string {
 	return ""
 }
 
-// promptHandler returns a Handler that renders the command body with $ARGUMENTS substitution.
-// Bodies without a placeholder append the args in a "## User Request" section.
+// promptHandler 返回一个 Handler，渲染命令正文并替换其中的 $ARGUMENTS。
+// 没有占位符的正文会把 args 追加到一个 "## User Request" 小节里。
 func promptHandler(body string) Handler {
 	return func(ctx *Context) string {
 		if strings.Contains(body, "$ARGUMENTS") {

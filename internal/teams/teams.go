@@ -39,8 +39,8 @@ type Member struct {
 	Conv     *conversation.Manager
 	Active   bool
 	Cancel   context.CancelFunc
-	// PaneID is the backend-specific handle assigned by tmux/iTerm
-	// spawn (e.g. window or tab name). Empty for in-process members.
+	// PaneID 是 tmux/iTerm spawn 时分配的后端相关句柄
+	// （例如 window 或 tab 名）。in-process 成员为空。
 	PaneID   string
 	Progress *TeammateProgress
 
@@ -139,9 +139,9 @@ func (t *Team) StopMember(name string) {
 	if !ok {
 		return
 	}
-	// External backends (tmux/iTerm) own a real OS pane that must be
-	// torn down before clearing the local handle. In-process members
-	// just need the goroutine cancelled.
+	// 外部后端（tmux/iTerm）持有真实的 OS 窗格，必须先把它拆掉，
+	// 再清掉本地句柄。in-process 成员
+	// 只需要把 goroutine 取消掉。
 	if member.PaneID != "" {
 		switch t.Mode {
 		case ModeTmux:
@@ -227,10 +227,10 @@ func (tm *TeamManager) GetTaskStore(teamName string) *SharedTaskStore {
 	return store
 }
 
-// CreateTeamWith registers an externally-constructed Team. Worker
-// processes spawned by tmux/iTerm build a Team locally (pointing at
-// the same mailbox dir as the lead's) and use this to expose it to
-// SendMessage in the same process.
+// CreateTeamWith 注册一个外部构造好的 Team。tmux/iTerm 拉起来的 worker
+// 进程会在本地建一个 Team（指向和 Lead
+// 相同的 mailbox 目录），然后用这个方法
+// 把它暴露给同进程里的 SendMessage。
 func (tm *TeamManager) CreateTeamWith(team *Team) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()

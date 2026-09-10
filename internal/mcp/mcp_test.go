@@ -39,10 +39,10 @@ func TestContext7MCP(t *testing.T) {
 		t.Fatal("No tools returned")
 	}
 
-	// Print the input schema of the first tool
+	// 打印第一个工具的 input schema
 	t.Logf("Input schema: %+v", tools[0].InputSchema)
 
-	// Call resolve-library-id with "bubbles"
+	// 用 "bubbles" 调用 resolve-library-id
 	t.Log("Calling resolve-library-id with 'bubbles'...")
 	text, isError, err := client.CallTool(ctx, "resolve-library-id", map[string]any{
 		"query":       "charmbracelet/bubbles",
@@ -54,7 +54,7 @@ func TestContext7MCP(t *testing.T) {
 	t.Logf("isError: %v", isError)
 	t.Logf("Result: %s", truncate(text, 500))
 
-	// Test tool name sanitization and schema
+	// 测试工具名净化和 schema
 	wrapper := &MCPToolWrapper{
 		serverName: "context7",
 		toolDef:    tools[0],

@@ -9,12 +9,12 @@ import (
 )
 
 func TestSessionSingleton(t *testing.T) {
-	// Initially nil
+	// 一开始是 nil
 	if s := GetCurrentWorktreeSession(); s != nil {
 		t.Fatal("expected nil session at start")
 	}
 
-	// Restore a session
+	// 恢复一个 session
 	session := &WorktreeSession{
 		OriginalCwd:    "/tmp/original",
 		WorktreePath:   "/tmp/wt",
@@ -31,7 +31,7 @@ func TestSessionSingleton(t *testing.T) {
 		t.Fatalf("expected name 'test-wt', got %q", got.WorktreeName)
 	}
 
-	// Restore nil clears
+	// 恢复成 nil 会清空
 	RestoreWorktreeSession(nil)
 	if s := GetCurrentWorktreeSession(); s != nil {
 		t.Fatal("expected nil after restoring nil")
@@ -41,13 +41,13 @@ func TestSessionSingleton(t *testing.T) {
 func TestSaveLoadWorktreeSession(t *testing.T) {
 	dir := t.TempDir()
 
-	// Load from non-existent file returns nil, nil
+	// 从不存在的文件加载返回 nil, nil
 	s, err := LoadWorktreeSession(dir)
 	if err != nil || s != nil {
 		t.Fatalf("expected (nil, nil), got (%v, %v)", s, err)
 	}
 
-	// Save a session
+	// 保存一个 session
 	session := &WorktreeSession{
 		OriginalCwd:    "/tmp/orig",
 		WorktreePath:   "/tmp/wt",
@@ -59,13 +59,13 @@ func TestSaveLoadWorktreeSession(t *testing.T) {
 		t.Fatalf("save failed: %v", err)
 	}
 
-	// Verify file exists
+	// 确认文件存在
 	path := filepath.Join(dir, ".mewcode", "worktree_session.json")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("session file not created: %v", err)
 	}
 
-	// Load it back
+	// 再加载回来
 	loaded, err := LoadWorktreeSession(dir)
 	if err != nil {
 		t.Fatalf("load failed: %v", err)
@@ -77,7 +77,7 @@ func TestSaveLoadWorktreeSession(t *testing.T) {
 		t.Fatalf("expected session ID 'sid-42', got %q", loaded.SessionID)
 	}
 
-	// Save nil deletes the file
+	// 保存 nil 会删掉文件
 	if err := SaveWorktreeSession(dir, nil); err != nil {
 		t.Fatalf("save nil failed: %v", err)
 	}
@@ -109,13 +109,13 @@ func TestCreateWorktreeForSession(t *testing.T) {
 		t.Fatal("expected positive creation duration for new worktree")
 	}
 
-	// Singleton should be set
+	// 单例应该被设置上
 	got := GetCurrentWorktreeSession()
 	if got == nil || got.WorktreeName != "my-feature" {
 		t.Fatal("singleton not set after CreateWorktreeForSession")
 	}
 
-	// Cleanup
+	// 清理
 	RestoreWorktreeSession(nil)
 	os.Chdir(repo)
 }
@@ -140,7 +140,7 @@ func TestKeepWorktree(t *testing.T) {
 	session := GetCurrentWorktreeSession()
 	wtPath := session.WorktreePath
 
-	os.Chdir(wtPath) // simulate being in worktree
+	os.Chdir(wtPath) // 模拟身处 worktree 中
 	if err := KeepWorktree(repo); err != nil {
 		t.Fatalf("keep failed: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestCleanupWorktree(t *testing.T) {
 	if s := GetCurrentWorktreeSession(); s != nil {
 		t.Fatal("session should be nil after cleanup")
 	}
-	// Directory should be gone
+	// 目录应该已经没了
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Fatal("worktree directory should be removed after cleanup")
 	}
@@ -201,7 +201,7 @@ func initTestRepo(t *testing.T, dir string) {
 			t.Fatalf("%v failed: %s", c, out)
 		}
 	}
-	// Create initial commit
+	// 创建初始提交
 	f := filepath.Join(dir, "init.txt")
 	os.WriteFile(f, []byte("init"), 0o644)
 	cmd := exec.Command("git", "add", ".")

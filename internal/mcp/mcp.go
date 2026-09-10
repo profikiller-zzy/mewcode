@@ -34,8 +34,8 @@ func (c *ServerConfig) IsStdio() bool {
 	return c.Command != ""
 }
 
-// transportKind picks the HTTP transport variant. Empty/"http"/"streamable" →
-// Streamable HTTP (2025-03-26 spec); "sse" → legacy SSE (2024-11-05 spec).
+// transportKind 决定使用哪种 HTTP transport。空/"http"/"streamable" →
+// Streamable HTTP（2025-03-26 规范）；"sse" → 旧版 SSE（2024-11-05 规范）。
 func (c *ServerConfig) transportKind() string {
 	switch strings.ToLower(c.Transport) {
 	case "sse":
@@ -45,7 +45,7 @@ func (c *ServerConfig) transportKind() string {
 	}
 }
 
-// headerRoundTripper injects fixed headers onto every outgoing request.
+// headerRoundTripper 给每个发出的请求注入固定的 header。
 type headerRoundTripper struct {
 	base    http.RoundTripper
 	headers map[string]string
@@ -93,9 +93,9 @@ func (c *Client) Connect(ctx context.Context) error {
 		for k, v := range c.config.Env {
 			cmd.Env = append(cmd.Env, k+"="+os.ExpandEnv(v))
 		}
-		// Detach stderr from the parent tty. Otherwise child processes (npx/node)
-		// detect stderr as a TTY and emit OSC color queries; the terminal sends
-		// the response to the controlling process's stdin, polluting the TUI input.
+		// 把 stderr 从父进程的 tty 上摘开。否则子进程（npx/node）
+		// 会把 stderr 判定为 TTY 并发 OSC 颜色查询；终端把响应发回
+		// 控制进程的 stdin，污染 TUI 的输入。
 		cmd.Stderr = io.Discard
 		transport = &mcp.CommandTransport{Command: cmd}
 	case c.config.URL != "":
@@ -152,7 +152,7 @@ func (c *Client) Close() {
 	}
 }
 
-// Manager handles multiple MCP servers
+// Manager 管理多个 MCP server
 type Manager struct {
 	configs map[string]ServerConfig
 	clients map[string]*Client
@@ -237,7 +237,7 @@ func (m *Manager) Shutdown() {
 	m.clients = make(map[string]*Client)
 }
 
-// MCPToolWrapper adapts an MCP tool to the Tool interface
+// MCPToolWrapper 把 MCP tool 适配成 Tool 接口
 type MCPToolWrapper struct {
 	serverName string
 	toolDef    *mcp.Tool

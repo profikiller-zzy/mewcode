@@ -90,11 +90,11 @@ func TestTeamManagerCRUD(t *testing.T) {
 	}
 }
 
-// TestSendMessageToolRoutesToLead pins the fix for the bug where a
-// teammate calling SendMessage(to="lead", ...) saw "recipient 'lead' not
-// found in any team" because the lead is never registered as a Member.
-// The tool must recognize LeadName and route via the sender's team
-// mailbox so the lead can read the reply on its next sweep.
+// TestSendMessageToolRoutesToLead 锁住这个 bug 的修复：teammate 调用
+// SendMessage(to="lead", ...) 时看到 "recipient 'lead' not
+// found in any team"，因为 Lead 从来没被登记成 Member。
+// 工具必须认出 LeadName，并经由发送方所在团队的
+// mailbox 路由，这样 Lead 在下一轮扫描时就能读到这条回复。
 func TestSendMessageToolRoutesToLead(t *testing.T) {
 	// 每个用例用独立的 teams 目录，避免复跑时消息累积到同一个收件箱
 	useTempHome(t)
@@ -126,14 +126,14 @@ func TestSendMessageToolRoutesToLead(t *testing.T) {
 	}
 }
 
-// TestSendMessageToolUnknownSenderToLead guards the failure path: if no
-// team contains the sender, sending to the lead can't pick a mailbox and
-// must surface a clear error rather than silently dropping the message.
+// TestSendMessageToolUnknownSenderToLead 守的是失败路径：如果没有任何团队
+// 包含这个发送方，发给 Lead 时选不出 mailbox，必须报出一个明确的错误，
+// 而不是把消息悄悄丢掉。
 func TestSendMessageToolUnknownSenderToLead(t *testing.T) {
 	// 每个用例用独立的 teams 目录，避免复跑时消息累积到同一个收件箱
 	useTempHome(t)
 	tm := NewTeamManager()
-	tm.CreateTeam("demo", ModeInProcess) // no members added
+	tm.CreateTeam("demo", ModeInProcess) // 没加任何成员
 
 	tool := &SendMessageTool{TeamMgr: tm, SenderName: "ghost"}
 	res := tool.Execute(context.Background(), map[string]any{

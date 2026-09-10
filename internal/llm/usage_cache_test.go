@@ -11,11 +11,11 @@ import (
 	"mewcode/internal/conversation"
 )
 
-// TestAnthropicUsageCacheParse verifies the Anthropic stream parser lifts
-// cache_read_input_tokens / cache_creation_input_tokens out of the API usage
-// into UsageInfo, alongside input/output. These are reported on message_start
-// (input + cache_*) and finalized on message_delta (output), then accumulated
-// by accMessage.
+// TestAnthropicUsageCacheParse 验证 Anthropic 的流式解析器会把
+// cache_read_input_tokens / cache_creation_input_tokens 从 API 的 usage 里提出来
+// 放进 UsageInfo，跟 input/output 并列。这两项在 message_start 上报
+// （input + cache_*），在 message_delta 定稿（output），
+// 然后由 accMessage 累加。
 func TestAnthropicUsageCacheParse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)

@@ -16,7 +16,7 @@ func TestCreateAgentWorktree(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	// CreateAgentWorktree needs to be called from within a git repo
+	// CreateAgentWorktree 需要在 git 仓库内部调用
 	origDir, _ := os.Getwd()
 	defer os.Chdir(origDir)
 	os.Chdir(repo)
@@ -37,12 +37,12 @@ func TestCreateAgentWorktree(t *testing.T) {
 		t.Fatal("expected non-empty head commit")
 	}
 
-	// Directory should exist
+	// 目录应该已经存在
 	if _, err := os.Stat(result.WorktreePath); err != nil {
 		t.Fatalf("worktree directory not created: %v", err)
 	}
 
-	// Session singleton should NOT be set (agent worktrees are session-less)
+	// 不应该设置 session 单例（agent worktree 是没有 session 的）
 	if s := GetCurrentWorktreeSession(); s != nil {
 		t.Fatal("CreateAgentWorktree should not touch global session")
 	}
@@ -60,13 +60,13 @@ func TestCreateAgentWorktree_Resume(t *testing.T) {
 	defer os.Chdir(origDir)
 	os.Chdir(repo)
 
-	// First call creates
+	// 第一次调用是创建
 	r1, err := CreateAgentWorktree(context.Background(), "agent-a7777777")
 	if err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
 
-	// Second call should resume (mtime bumped)
+	// 第二次调用应该走恢复路径（并刷新 mtime）
 	r2, err := CreateAgentWorktree(context.Background(), "agent-a7777777")
 	if err != nil {
 		t.Fatalf("second call failed: %v", err)
@@ -98,7 +98,7 @@ func TestRemoveAgentWorktree(t *testing.T) {
 		t.Fatal("RemoveAgentWorktree returned false")
 	}
 
-	// Directory should be gone
+	// 目录应该已经没了
 	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
 		t.Fatal("worktree directory should be removed")
 	}

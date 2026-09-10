@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// ephemeralWorktreePatterns identifies throwaway worktrees that can be auto-cleaned. User-named
-// worktrees (e.g. "my-feature") never match.
+// ephemeralWorktreePatterns 用来识别可以自动清理的一次性 worktree。用户自己起名的
+// worktree（例如 "my-feature"）永远不会匹配。
 var ephemeralWorktreePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^agent-a[0-9a-f]{7}$`),
 	regexp.MustCompile(`^wf_[0-9a-f]{8}-[0-9a-f]{3}-\d+$`),
@@ -27,11 +27,11 @@ func isEphemeralSlug(slug string) bool {
 	return false
 }
 
-// CleanupStaleAgentWorktrees removes stale agent/workflow worktrees older than cutoffDate. Three-
-// layer safety filter:
+// CleanupStaleAgentWorktrees 清理早于 cutoffDate 的过期 agent/workflow worktree。
+// 三层安全过滤：
 //
-// 1. Name pattern: only ephemeral slugs 2. Age + session: skip current session and recently
-// modified 3. Change check: skip if tracked changes or unpushed commits.
+// 1. 名字模式：只认 ephemeral slug 2. 时间 + session：跳过当前 session 和最近修改过的
+// 3. 变更检查：有已跟踪改动或未推送 commit 的跳过。
 func CleanupStaleAgentWorktrees(ctx context.Context, cutoffDate time.Time) int {
 	cwd, _ := os.Getwd()
 	gitRoot := FindCanonicalGitRoot(cwd)
@@ -54,7 +54,7 @@ func CleanupStaleAgentWorktrees(ctx context.Context, cutoffDate time.Time) int {
 	for _, entry := range entries {
 		slug := entry.Name()
 
-		// Layer 1: only ephemeral patterns.
+		// 第 1 层：只认 ephemeral 模式。
 		if !isEphemeralSlug(slug) {
 			continue
 		}
@@ -64,7 +64,7 @@ func CleanupStaleAgentWorktrees(ctx context.Context, cutoffDate time.Time) int {
 			continue
 		}
 
-		// Layer 2: age check.
+		// 第 2 层：时间检查。
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -73,8 +73,8 @@ func CleanupStaleAgentWorktrees(ctx context.Context, cutoffDate time.Time) int {
 			continue
 		}
 
-		// Layer 3: fail-closed change checks -uno: untracked files in a stale crashed agent worktree are
-		// build artifacts; skipping the untracked scan is 5-10× faster on large repos.
+		// 第 3 层：fail-closed 的变更检查。带 -uno：过期崩溃 Agent 的 worktree 里的
+		// 未跟踪文件都是构建产物；跳过未跟踪文件的扫描在大仓库上能快 5-10 倍。
 		statusOut, _, statusCode := runGit(ctx, worktreePath,
 			"--no-optional-locks", "status", "--porcelain", "-uno")
 		if statusCode != 0 || strings.TrimSpace(statusOut) != "" {
@@ -98,8 +98,8 @@ func CleanupStaleAgentWorktrees(ctx context.Context, cutoffDate time.Time) int {
 	return removed
 }
 
-// StartCleanupLoop runs periodic stale worktree cleanup in a background goroutine. Returns
-// immediately; the goroutine exits when ctx is cancelled.
+// StartCleanupLoop 在后台 goroutine 里周期性清理过期 worktree。立即返回；
+// ctx 被取消时 goroutine 退出。
 func StartCleanupLoop(ctx context.Context) {
 	interval := GetStaleCleanupInterval()
 	if interval <= 0 {

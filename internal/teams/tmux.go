@@ -9,7 +9,7 @@ import (
 func spawnTmuxTeammate(teamName, memberName, cliCommand string) (string, error) {
 	paneName := fmt.Sprintf("%s-%s", teamName, memberName)
 
-	// Create a new tmux window (not split) for the teammate
+	// 为 teammate 新建一个 tmux window（不是 split）
 	cmd := exec.Command("tmux", "new-window", "-d", "-n", paneName, cliCommand)
 	output, err := cmd.CombinedOutput()
 

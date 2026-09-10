@@ -6,9 +6,9 @@ import (
 	"mewcode/internal/compact"
 )
 
-// ContextCoordinator is session-owned policy invoked by AgentRun immediately
-// before an iteration sends its next model request. Layer 1 has already run
-// when tool results entered history; this coordinator owns Layer 2 state.
+// ContextCoordinator 是 session 持有的策略，由 AgentRun 在某一轮迭代
+// 发出下一次模型请求之前调用。工具结果进历史时
+// 第 1 层已经跑过了；这个 coordinator 负责第 2 层的状态。
 type ContextCoordinator interface {
 	Prepare(context.Context, *AgentRun, int, []map[string]any) (string, error)
 }

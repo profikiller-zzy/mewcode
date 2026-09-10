@@ -9,10 +9,10 @@ import (
 	"mewcode/internal/worktree"
 )
 
-// EnterWorktreeTool creates an isolated git worktree and switches the session into it.
+// EnterWorktreeTool 创建一个隔离的 git worktree，并把 session 切换进去。
 type EnterWorktreeTool struct {
-	SessionID string // injected by TUI at startup
-	RepoRoot  string // injected by TUI at startup
+	SessionID string // 由 TUI 在启动时注入
+	RepoRoot  string // 由 TUI 在启动时注入
 }
 
 func (t *EnterWorktreeTool) Name() string           { return "EnterWorktree" }
@@ -40,7 +40,7 @@ func (t *EnterWorktreeTool) Schema() map[string]any {
 }
 
 func (t *EnterWorktreeTool) Execute(ctx context.Context, args map[string]any) ToolResult {
-	// Guard: reject if already in a worktree session.
+	// 守卫：如果已经在 worktree session 里就拒绝。
 	if worktree.GetCurrentWorktreeSession() != nil {
 		return ToolResult{
 			Output:  "Already in a worktree session",

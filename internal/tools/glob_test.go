@@ -31,9 +31,9 @@ func setupGlobTree(t *testing.T) string {
 }
 
 func TestGlobDoubleStarPattern(t *testing.T) {
-	// Before the fix, `**/*.go` returned "No files matched the pattern."
-	// because filepath.Match doesn't understand `**`. Verify the fix
-	// recursively matches .go files at every depth.
+	// 修复之前，`**/*.go` 会返回 "No files matched the pattern."，
+	// 因为 filepath.Match 不认 `**`。验证修复后
+	// 能在任意深度递归匹配 .go 文件。
 	root := setupGlobTree(t)
 	tool := &GlobTool{}
 	res := tool.Execute(context.Background(), map[string]any{
@@ -65,7 +65,7 @@ func TestGlobPlainPatternStillWorks(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("glob errored: %s", res.Output)
 	}
-	// Plain `*.go` matches only top-level + same base name match at each dir.
+	// 普通的 `*.go` 只匹配顶层，以及各层目录下同名的文件。
 	if !strings.Contains(res.Output, "main.go") {
 		t.Errorf("plain pattern should still match base names, got:\n%s", res.Output)
 	}

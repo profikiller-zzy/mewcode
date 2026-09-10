@@ -7,25 +7,25 @@ import (
 	"os/exec"
 )
 
-// gitNoPromptEnv returns the base environment for every git subprocess this package spawns, with
-// two safety knobs appended:
+// gitNoPromptEnv 返回本包派生的每个 git 子进程使用的基础环境变量，
+// 并在末尾追加两个安全阀：
 //
-// GIT_TERMINAL_PROMPT=0: prevents git from opening /dev/tty for credential
-// prompts (which would hang the CLI).
-// GIT_ASKPASS="": disables askpass GUI programs (same outcome via
-// a different code path).
+// GIT_TERMINAL_PROMPT=0: 阻止 git 打开 /dev/tty 做凭据提示
+// （那样会把 CLI 卡住）。
+// GIT_ASKPASS="": 关掉 askpass 图形界面程序
+// （换个代码路径，效果一样）。
 //
-// Together with Stdin = nil on the *exec.Cmd, this closes every channel through which git could
-// block on interactive input.
+// 再配合 *exec.Cmd 上的 Stdin = nil，就堵死了 git 可能因交互
+// 输入而阻塞的所有通道。
 func gitNoPromptEnv() []string {
 	return append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=")
 }
 
-// runGit invokes `git <args.>` inside dir with stdin closed and the no-prompt environment applied.
-// Returns stdout, stderr, and the exit code (or -1 if the process didn't run). Never throws on
-// non-zero exit; the caller decides whether code != 0 is an error in context.
+// runGit 在 dir 里执行 `git <args.>`，关闭 stdin 并应用 no-prompt 环境。
+// 返回 stdout、stderr 和退出码（进程没能启动时返回 -1）。非零退出也不抛错，
+// 由调用方结合上下文判断 code != 0 算不算错误。
 //
-// ctx propagates cancellation: cancelling ctx kills the git subprocess.
+// ctx 会传递取消：取消 ctx 会杀掉 git 子进程。
 func runGit(ctx context.Context, dir string, args ...string) (stdout, stderr string, code int) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -44,7 +44,7 @@ func runGit(ctx context.Context, dir string, args ...string) (stdout, stderr str
 	if ee, ok := err.(*exec.ExitError); ok {
 		return stdout, stderr, ee.ExitCode()
 	}
-	// Process failed to start (git not on PATH, dir doesn't exist, etc.).
+	// 进程启动失败（git 不在 PATH 上、dir 不存在等）。
 	return stdout, stderr, -1
 }
 

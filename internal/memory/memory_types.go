@@ -15,9 +15,9 @@ const (
 
 var MemoryTypes = []MemoryType{TypeUser, TypeFeedback, TypeProject, TypeReference}
 
-// ParseMemoryType validates a raw frontmatter value into a MemoryType.
-// Returns ("", false) for invalid or missing values — legacy files without
-// a `type:` field keep working, files with unknown types degrade gracefully.
+// ParseMemoryType 把 frontmatter 里的原始值校验成 MemoryType。
+// 对非法或缺失的值返回 ("", false) —— 没有 `type:` 字段的历史文件
+// 继续可用，类型未知的文件则优雅降级。
 func ParseMemoryType(raw string) (MemoryType, bool) {
 	for _, t := range MemoryTypes {
 		if string(t) == raw {

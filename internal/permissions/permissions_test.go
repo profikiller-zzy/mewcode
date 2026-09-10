@@ -74,7 +74,7 @@ func TestPathSandbox(t *testing.T) {
 	if ok, _ := sb.Check(filepath.Join(dir, "x.txt")); !ok {
 		t.Error("expected file inside sandbox to be allowed")
 	}
-	// /etc lives outside both the project root and os.TempDir().
+	// /etc 既在项目根目录之外，也在 os.TempDir() 之外。
 	if ok, _ := sb.Check("/etc/passwd"); ok {
 		t.Error("expected /etc/passwd to be denied")
 	}
@@ -357,9 +357,9 @@ func TestModeDecide(t *testing.T) {
 		{ModeDefault, tools.CategoryWrite, Ask},
 		{ModeDefault, tools.CategoryCommand, Ask},
 		{ModeAcceptEdits, tools.CategoryWrite, Allow},
-		// Plan Mode no longer participates in modeMatrix — it relies purely
-		// on prompt-injection constraints (see 1974e0d). Decide falls back
-		// to Ask via the unknown-mode branch.
+		// Plan Mode 不再参与 modeMatrix —— 它完全依赖 prompt 注入约束
+		// （见 1974e0d）。Decide 会走未知模式的分支
+		// 回退到 Ask。
 		{ModePlan, tools.CategoryWrite, Ask},
 		{ModePlan, tools.CategoryCommand, Ask},
 		{ModeBypass, tools.CategoryCommand, Allow},
@@ -377,7 +377,7 @@ func TestCheckerLayerOrder(t *testing.T) {
 	sb := NewPathSandbox(dir)
 	eng := &RuleEngine{LocalPath: filepath.Join(dir, "local.yaml")}
 
-	// Dangerous Bash short-circuits before rule engine.
+	// 危险的 Bash 会在规则引擎之前短路拦截。
 	bash := &fakeTool{name: "Bash", cat: tools.CategoryCommand}
 	chk := NewChecker(sb, eng, ModeBypass)
 	d := chk.Check(bash, map[string]any{"command": "rm -rf /"})
@@ -385,7 +385,7 @@ func TestCheckerLayerOrder(t *testing.T) {
 		t.Errorf("dangerous command should be Deny under any mode, got %v", d)
 	}
 
-	// Path outside sandbox is Ask (user confirmation required).
+	// 沙箱外的路径是 Ask（需要用户确认）。
 	defaultChk := NewChecker(sb, eng, ModeDefault)
 	wf := &fakeTool{name: "WriteFile", cat: tools.CategoryWrite}
 	d = defaultChk.Check(wf, map[string]any{"file_path": "/etc/passwd"})
@@ -399,33 +399,33 @@ func TestCheckerLayerOrder(t *testing.T) {
 		t.Errorf("read path outside sandbox should be Ask, got %v", d)
 	}
 
-	// Bypass mode skips sandbox confirmation.
+	// bypass 模式跳过沙箱确认。
 	d = chk.Check(wf, map[string]any{"file_path": "/etc/passwd"})
 	if d.Effect != Allow {
 		t.Errorf("bypass mode should skip sandbox Ask, got %v", d)
 	}
 
-	// Safe read-only command auto-allows.
+	// 安全的只读命令自动放行。
 	d = chk.Check(bash, map[string]any{"command": "git status"})
 	if d.Effect != Allow {
 		t.Errorf("safe command should be Allow, got %v", d)
 	}
 
-	// Plan Mode: write outside sandbox triggers Ask (sandbox layer).
+	// Plan Mode：沙箱外的写入触发 Ask（沙箱层）。
 	planChk := NewChecker(sb, eng, ModePlan)
 	d = planChk.Check(wf, map[string]any{"file_path": "/etc/passwd"})
 	if d.Effect != Ask {
 		t.Errorf("plan mode write outside sandbox should be Ask, got %v", d)
 	}
 
-	// Default mode: write category Ask without rule.
+	// 默认模式：没有规则时写操作是 Ask。
 	chk = NewChecker(sb, eng, ModeDefault)
 	d = chk.Check(wf, map[string]any{"file_path": filepath.Join(dir, "x.txt")})
 	if d.Effect != Ask {
 		t.Errorf("default mode write should be Ask, got %v", d)
 	}
 
-	// Local rule allow overrides mode Ask.
+	// 本地规则的 allow 覆盖模式判定的 Ask。
 	eng.AppendLocalRule(Rule{ToolName: "WriteFile", Pattern: filepath.Join(dir, "x.txt"), Effect: RuleAllow})
 	d = chk.Check(wf, map[string]any{"file_path": filepath.Join(dir, "x.txt")})
 	if d.Effect != Allow {

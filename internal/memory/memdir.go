@@ -113,7 +113,7 @@ func EnsureMemoryDirExists(memoryDir string) error {
 }
 
 // BuildMemoryLines 构建类型化记忆的行为说明（不包含 MEMORY.md 内容）。
-// Constrains memories to a closed four-type taxonomy (user / feedback / project / reference) —
+// 把记忆约束在封闭的四类分类法里（user / feedback / project / reference）——
 // 可从当前项目状态推导出的内容（代码模式、架构、Git 历史）明确排除。
 //
 // 双路径版本：user/feedback 写入 userMemDir（跨项目跟随用户），project/reference 写入 projectMemDir（随仓库保存）。

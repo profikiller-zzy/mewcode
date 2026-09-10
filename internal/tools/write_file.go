@@ -42,10 +42,10 @@ func (t *WriteFileTool) Execute(_ context.Context, args map[string]any) ToolResu
 		return ToolResult{Output: "Error: file_path is required", IsError: true}
 	}
 
-	// Read-before-edit gate — skip for new files
+	// 先读后写的闸门 —— 新文件跳过
 	if t.FileStateCache != nil {
 		if _, err := os.Stat(filePath); err == nil {
-			// File exists: must have been read first
+			// 文件已存在：必须先读过
 			if ok, errMsg := t.FileStateCache.Check(filePath); !ok {
 				return ToolResult{Output: errMsg, IsError: true}
 			}
@@ -64,7 +64,7 @@ func (t *WriteFileTool) Execute(_ context.Context, args map[string]any) ToolResu
 		return ToolResult{Output: fmt.Sprintf("Error writing file: %s", err), IsError: true}
 	}
 
-	// Update cache after successful write
+	// 写入成功后更新缓存
 	if t.FileStateCache != nil {
 		t.FileStateCache.Update(filePath)
 	}

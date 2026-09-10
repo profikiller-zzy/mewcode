@@ -27,15 +27,15 @@ import (
 //
 // AppendSystem 用于在提取成功后向用户显示“Memory saved: foo.md”通知。
 type Deps struct {
-	MemoryDir     string                  // <wd>/.mewcode/memory/ — project/reference (trailing sep)
-	UserMemoryDir string                  // ~/.mewcode/memory/ — user/feedback (trailing sep); may be "" if $HOME unresolved
-	ProjectRoot   string                  // absolute project root
-	Client        llm.Client              // forked extraction agent's LLM client
-	ToolRegistry  *tools.Registry         // parent tool registry (will be filtered)
+	MemoryDir     string                  // <wd>/.mewcode/memory/ —— project/reference（末尾带分隔符）
+	UserMemoryDir string                  // ~/.mewcode/memory/ —— user/feedback（末尾带分隔符）；$HOME 解析不到时可能为 ""
+	ProjectRoot   string                  // 项目根目录绝对路径
+	Client        llm.Client              // 派生提取 agent 用的 LLM client
+	ToolRegistry  *tools.Registry         // 父工具注册表（会被过滤）
 	Protocol      string                  // "anthropic" / "openai"
-	Conversation  *conversation.Manager   // parent conversation reference
-	AppendSystem  func(string)            // optional: notify TUI of saved memories
-	DebugLogf     func(format string, args ...any) // optional: debug logging
+	Conversation  *conversation.Manager   // 父对话的引用
+	AppendSystem  func(string)            // 可选：通知 TUI 已保存的记忆
+	DebugLogf     func(format string, args ...any) // 可选：调试日志
 }
 
 // Extractor 是后台记忆提取器。所有状态都封装在结构体字段中，并由 mu 保护。
@@ -165,10 +165,10 @@ func (e *Extractor) runExtraction(ctx context.Context, isTrailingRun bool) error
 // Agent 和 AskUserQuestion 会自动排除。
 	subRegistry := agents.FilterToolsForAgent(e.deps.ToolRegistry, nil, nil, true)
 
-	// Strict path sandbox: only memoryDir is allowed for file tools. This is stricter than the
-	// original createAutoMemCanUseTool (which lets Read/Grep/Glob roam unrestricted) but matches the
-	// prompt's explicit warning against grepping source code, so the behavioural impact is small and
-	// the safety win is meaningful.
+	// 严格的路径沙箱：文件工具只允许访问 memoryDir。这比原来的
+	// createAutoMemCanUseTool 更严格（后者放任 Read/Grep/Glob 到处跑），
+	// 但与 prompt 里明确警告不要 grep 源码一致，因此行为差异很小，
+	// 安全性收益却很实在。
 	//
 	// 使用 ModeBypass，避免文件或命令工具进入需要人工确认的 Ask 状态；后台没有 TUI 可以回答。
 	subChecker := memory.NewSubAgentChecker(e.deps.ProjectRoot, e.deps.UserMemoryDir)
@@ -257,7 +257,7 @@ func (e *Extractor) advanceCursor(to int) {
 	e.mu.Unlock()
 }
 
-// countModelVisibleMessagesSince counts user/assistant messages added since sinceIdx. Falls back to
+// countModelVisibleMessagesSince 统计 sinceIdx 之后新增的 user/assistant 消息。回退路径是：
 // sinceIdx 越界时会统计全部模型可见消息（例如对话压缩后原游标已不再对应当前位置）。
 // 这是未找到起点时的恢复路径。
 func countModelVisibleMessagesSince(messages []conversation.Message, sinceIdx int) int {

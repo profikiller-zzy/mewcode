@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"mewcode/internal/config"
@@ -54,8 +55,8 @@ func needsToolSearchBeta(toolSchemas []map[string]any) bool {
 
 // supportsAdaptiveThinking 用前缀匹配 + 版本号检查来判断模型是否支持自适应思考
 func supportsAdaptiveThinking(model string) bool {
-	// claude-opus-4-6, claude-opus-4-7, claude-sonnet-4-6, etc.
-	// but NOT claude-sonnet-4-5 (4.5 uses enabled mode)
+	// 例如 claude-opus-4-6、claude-opus-4-7、claude-sonnet-4-6 等。
+	// 但不包括 claude-sonnet-4-5（4.5 用的是 enabled 模式）
 	for _, family := range []string{"claude-opus-4-", "claude-sonnet-4-"} {
 		if strings.HasPrefix(model, family) {
 			rest := model[len(family):]
@@ -68,11 +69,14 @@ func supportsAdaptiveThinking(model string) bool {
 }
 
 type anthropicClient struct {
-	client          anthropic.Client
-	model           string
-	thinking        bool
-	systemPrompt    string
-	maxOutputTokens int
+	client       anthropic.Client
+	model        string
+	thinking     bool
+	systemPrompt string
+	// maxOutputTokens 用 atomic 而不是普通 int：client 实例被主 Agent 与多个并发
+	// 子 Agent 共享，主循环的 max_tokens 升级会写它，每个 Stream 各自读它，
+	// 并发访问是常态（同步并发化的 sub-agent 全都指向同一个 client）。
+	maxOutputTokens atomic.Int64
 	contextWindow   int
 }
 
@@ -89,14 +93,15 @@ func newAnthropicClient(cfg *config.ProviderConfig, systemPrompt string) (*anthr
 		option.WithBaseURL(cfg.BaseURL),
 	)
 
-	return &anthropicClient{
-		client:          client,
-		model:           cfg.Model,
-		thinking:        cfg.Thinking,
-		systemPrompt:    systemPrompt,
-		maxOutputTokens: cfg.GetMaxOutputTokens(),
-		contextWindow:   cfg.GetContextWindow(),
-	}, nil
+	c := &anthropicClient{
+		client:        client,
+		model:         cfg.Model,
+		thinking:      cfg.Thinking,
+		systemPrompt:  systemPrompt,
+		contextWindow: cfg.GetContextWindow(),
+	}
+	c.maxOutputTokens.Store(int64(cfg.GetMaxOutputTokens()))
+	return c, nil
 }
 
 func (c *anthropicClient) SetSystemPrompt(prompt string) {
@@ -104,21 +109,21 @@ func (c *anthropicClient) SetSystemPrompt(prompt string) {
 }
 
 func (c *anthropicClient) SetMaxOutputTokens(tokens int) {
-	c.maxOutputTokens = tokens
+	c.maxOutputTokens.Store(int64(tokens))
 }
 
-// anthropicModelFetchTimeout bounds the auto-pull of model metadata so a slow
-// or unreachable endpoint never delays startup.
+// anthropicModelFetchTimeout 限制自动拉取模型元数据的耗时，这样缓慢
+// 或不可达的端点永远不会拖慢启动。
 const anthropicModelFetchTimeout = 3 * time.Second
 
-// FetchModelContextWindow asks the Anthropic-compatible /v1/models/{model}
-// endpoint for the model's max_input_tokens. It is best-effort: on any error
-// (non-anthropic endpoint, network failure, timeout, missing field) it returns
-// 0 and never panics or blocks beyond anthropicModelFetchTimeout. The caller
-// treats 0 as "unknown" and falls back to the next context-window layer.
+// FetchModelContextWindow 向兼容 Anthropic 的 /v1/models/{model}
+// 端点查询模型的 max_input_tokens。它是尽力而为的：任何错误
+// （非 anthropic 端点、网络失败、超时、字段缺失）都返回
+// 0，既不 panic，也不会阻塞超过 anthropicModelFetchTimeout。调用方
+// 把 0 当作「未知」，回退到下一层 context window 获取方式。
 func (c *anthropicClient) FetchModelContextWindow(ctx context.Context) (window int) {
-	// Hard guard: this runs at startup, so a panic in the SDK or a malformed
-	// response must degrade silently rather than take the process down.
+	// 硬性保护：这段代码在启动时执行，所以 SDK 里 panic 或响应畸形
+	// 都必须静默降级，而不是把整个进程搞崩。
 	defer func() {
 		if recover() != nil {
 			window = 0
@@ -128,8 +133,8 @@ func (c *anthropicClient) FetchModelContextWindow(ctx context.Context) (window i
 	ctx, cancel := context.WithTimeout(ctx, anthropicModelFetchTimeout)
 	defer cancel()
 
-	// Best-effort startup call: disable retries so a flaky/failing endpoint
-	// fails fast within the timeout instead of triggering a retry storm.
+	// 启动时的尽力而为调用：关掉重试，这样不稳定的端点会在超时内
+	// 快速失败，而不是引发重试风暴。
 	info, err := c.client.Models.Get(ctx, c.model, anthropic.ModelGetParams{}, option.WithMaxRetries(0))
 	if err != nil || info == nil || info.MaxInputTokens <= 0 {
 		return 0
@@ -172,14 +177,14 @@ func (c *anthropicClient) Stream(ctx context.Context, conv *conversation.Manager
 		defer close(events)
 		defer close(errs)
 
-		maxTokens := int64(c.maxOutputTokens)
-		// Anchor the prompt cache on the longest-stable prefix: the system
-		// prompt. Marked once here, plus once on the tool list and once on
-		// the tail of the final user message below — Anthropic caches up to
-		// each breakpoint and re-checks byte-identity on the next request.
-		// tool_result content stays byte-stable past these breakpoints
-		// because the toolresult budget finalizes each message at ingest
-		// and never rewrites history afterwards.
+		maxTokens := c.maxOutputTokens.Load()
+		// 把 prompt cache 的锚点放在最稳定的前缀上：system
+		// prompt。这里标记一次，工具列表上再标记一次，下面
+		// 最后一条 user 消息的尾部也标记一次 —— Anthropic 会缓存到
+		// 每个断点为止，并在下一次请求时重新校验字节是否一致。
+		// 断点之后的 tool_result 内容保持字节稳定，
+		// 因为 toolresult 预算在消息进入时就已定型，
+		// 之后不会再重写历史。
 		params := anthropic.MessageNewParams{
 			Model:     c.model,
 			MaxTokens: maxTokens,
@@ -221,9 +226,9 @@ func (c *anthropicClient) Stream(ctx context.Context, conv *conversation.Manager
 		inThinking := false
 		var accMessage anthropic.Message
 
-		// Read SSE events in a separate goroutine so we can respect ctx cancellation
-		// and detect silent connection drops. The SDK's stream.Next() may block
-		// indefinitely if the underlying connection dies without FIN/RST.
+		// 在单独的 goroutine 里读 SSE 事件，这样既能响应 ctx 取消，
+		// 也能发现连接静默断开。底层连接在没发 FIN/RST 就断了的话，
+		// SDK 的 stream.Next() 可能会一直阻塞。
 		type sseResult struct {
 			hasNext bool
 		}
@@ -263,9 +268,9 @@ func (c *anthropicClient) Stream(ctx context.Context, conv *conversation.Manager
 
 			event := stream.Current()
 			accMessage.Accumulate(event)
-			// Anthropic SDK's Accumulate only copies OutputTokens from
-			// message_delta, but some providers (MiniMax) also report
-			// InputTokens and cache fields there. Patch them in manually.
+			// Anthropic SDK 的 Accumulate 只从 message_delta 里拷贝
+			// OutputTokens，但有些 provider（MiniMax）也会在那里上报
+			// InputTokens 和 cache 相关字段。这里手动补上。
 			if mde, ok := event.AsAny().(anthropic.MessageDeltaEvent); ok {
 				if mde.Usage.InputTokens > 0 {
 					accMessage.Usage.InputTokens = mde.Usage.InputTokens
@@ -354,15 +359,15 @@ func (c *anthropicClient) Stream(ctx context.Context, conv *conversation.Manager
 	return events, errs
 }
 
-// markLastUserTailForCache attaches an ephemeral cache_control marker to the
-// last content block of the final user-role message. Anthropic caches the
-// prefix up to (and including) this block; subsequent requests with a
-// byte-identical prefix hit the cache. tool_result content past this
-// breakpoint stays byte-stable because the toolresult budget finalizes
-// each message at ingest and never rewrites history afterwards.
+// markLastUserTailForCache 给最后一条 user 角色消息的最后一个 content
+// block 加上一个 ephemeral cache_control 标记。Anthropic 会缓存到
+// （并包含）这个 block 为止的前缀；后续请求只要前缀字节完全一致
+// 就能命中 cache。断点之后的 tool_result 内容保持字节稳定，
+// 因为 toolresult 预算在消息进入时就已定型，
+// 之后不会再重写历史。
 //
-// Mutates `messages` in place. No-op if there's no user message or the
-// final user message has no content blocks we can mark.
+// 原地修改 `messages`。没有 user 消息、或最后一条 user 消息
+// 没有可供标记的 content block 时不做任何事。
 func markLastUserTailForCache(messages []anthropic.MessageParam) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != anthropic.MessageParamRoleUser {
@@ -436,7 +441,7 @@ func buildAnthropicMessages(messages []conversation.Message) []anthropic.Message
 				Content: blocks,
 			})
 		} else {
-			// Merge consecutive user text messages to maintain alternation.
+			// 合并连续的 user 文本消息，以维持角色交替。
 			canMerge := false
 			if n := len(result); n > 0 {
 				prev := result[n-1]

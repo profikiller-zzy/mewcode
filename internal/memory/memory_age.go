@@ -33,8 +33,8 @@ func MemoryAge(mtimeMs int64) string {
 //
 // 当调用方已经自行添加包装（例如 relevant_memories → wrapMessagesInSystemReminder）时使用。
 //
-// Motivated by user reports of stale code-state memories (file:line
-// citations to code that has since changed) being asserted as fact —
+// 起因是用户反馈：过期的代码状态记忆（指向早已改动过的代码的
+// file:line 引用）被当成事实来断言 ——
 // 因为代码引用会让过期结论听起来更像事实。
 func MemoryFreshnessText(mtimeMs int64) string {
 	d := MemoryAgeDays(mtimeMs)

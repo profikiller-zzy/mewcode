@@ -21,24 +21,24 @@ import (
 	"mewcode/internal/worktree"
 )
 
-// teammateArgs holds the values parsed off the CLI when this process is
-// launched as a teammate worker (i.e. spawned by tmux/iTerm from
-// teams.BuildTeammateCLI).
+// teammateArgs 存放本进程以 teammate worker 身份启动时
+// 从命令行解析出来的参数（也就是由 tmux/iTerm 经
+// teams.BuildTeammateCLI 拉起的那种场景）。
 type teammateArgs struct {
 	teamName   string
 	memberName string
 }
 
-// parseTeammateFlags returns (args, true) when os.Args carries the
-// --teammate flag, signalling teammate-worker mode. Any other value
-// returns ok=false and the caller should boot the normal TUI.
+// parseTeammateFlags 在 os.Args 带 --teammate 标志时返回 (args, true)，
+// 表示进入 teammate-worker 模式；其他情况返回 ok=false，
+// 调用方应当照常启动 TUI。
 //
-// Format produced by teams.BuildTeammateCLI:
+// teams.BuildTeammateCLI 生成的命令行格式：
 //
 //	mewcode --teammate --team-name <t> --agent-name <n>
 //
-// The parsing is intentionally minimal: only the three flags this
-// worker needs are recognised, and they must come as separate tokens.
+// 解析逻辑刻意做得极简：只认这个 worker 需要的三个标志，
+// 而且它们必须作为独立的 token 出现。
 func parseTeammateFlags(args []string) (teammateArgs, bool) {
 	var out teammateArgs
 	if len(args) == 0 || args[0] != "--teammate" {
@@ -65,11 +65,11 @@ func parseTeammateFlags(args []string) (teammateArgs, bool) {
 	return out, true
 }
 
-// runTeammate boots this process as a worker on an existing team. It
-// loads the same config a TUI run would, builds a tools registry, then
-// drops into teams.RunInProcessTeammate. The initial task is read from
-// the mailbox — the lead writes it there before calling tmux/iTerm
-// spawn (see teams.SpawnTeammate).
+// runTeammate 把本进程作为已有团队的一个 worker 启动。它
+// 加载与 TUI 运行时相同的配置，组装工具注册表，然后
+// 进入 teams.RunInProcessTeammate。初始任务从邮箱里读取 ——
+// Lead 在调用 tmux/iTerm spawn 之前已经把它写在那里了
+// （见 teams.SpawnTeammate）。
 func runTeammate(args teammateArgs) error {
 	if args.teamName == "" || args.memberName == "" {
 		return fmt.Errorf("--teammate requires --team-name and --agent-name")
@@ -87,9 +87,9 @@ func runTeammate(args teammateArgs) error {
 	wd, _ := os.Getwd()
 	sessionID := session.NewID()
 
-	// Worker processes get SIGINT/SIGTERM forwarded so closing the
-	// pane / Ctrl-C in the tab cleanly cancels the loop and lets
-	// deferred cleanup run.
+	// worker 进程会收到转发过来的 SIGINT/SIGTERM，这样关掉面板
+	// 或在标签页里按 Ctrl-C 时，能干净地取消 loop，
+	// 让 defer 里的清理逻辑跑完。
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigCh := make(chan os.Signal, 1)
@@ -145,10 +145,10 @@ func runTeammate(args teammateArgs) error {
 
 	addendum := teams.BuildTeammateAddendum(args.teamName, args.memberName, nil)
 
-	// No initial prompt argument: the lead wrote the first message to
-	// the mailbox before spawn, so the loop's first idle poll picks
-	// it up. Passing "" prevents RunInProcessTeammate from injecting
-	// a duplicate user message.
+	// 这里不传初始 prompt：Lead 在 spawn 之前已经把第一条消息
+	// 写进邮箱，loop 的第一次空闲轮询就会取到它。传 ""
+	// 是为了不让 RunInProcessTeammate 再注入
+	// 一条重复的用户消息。
 	fmt.Fprintf(os.Stderr, "[teammate %s/%s] booted, awaiting tasks\n", args.teamName, args.memberName)
 	return teams.RunInProcessTeammate(ctx, team, member, "", addendum, streamEventsToStderr())
 }
@@ -217,9 +217,9 @@ func buildTeammateRegistry(ctx context.Context, opts teammateToolOptions) *tools
 	return registry
 }
 
-// streamEventsToStderr returns a channel that forwards every agent
-// event to stderr in a human-readable form. Worker processes have no
-// TUI; this gives the tmux/iTerm pane something visible to show.
+// streamEventsToStderr 返回一个 channel，把每个 agent 事件以可读的形式
+// 转发到 stderr。worker 进程没有 TUI，
+// 这样 tmux/iTerm 面板里至少有东西可看。
 func streamEventsToStderr() chan<- agent.AgentEvent {
 	ch := make(chan agent.AgentEvent, 32)
 	go func() {
@@ -245,6 +245,6 @@ func streamEventsToStderr() chan<- agent.AgentEvent {
 	return ch
 }
 
-// _ silences the unused-import warning when conversation is referenced
-// only indirectly via Member.Conv.
+// 当 conversation 只通过 Member.Conv 被间接引用时，
+// 用这个 _ 消掉未使用导入的告警。
 var _ = conversation.NewManager

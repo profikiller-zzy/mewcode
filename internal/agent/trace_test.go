@@ -33,8 +33,8 @@ func TestJSONLTraceStoreReplayAndLiveSubscription(t *testing.T) {
 	if len(events) != 2 || events[0].Type != TraceRunStarted || events[1].Reason != RunCompleted {
 		t.Fatalf("unexpected replay: %+v", events)
 	}
-	// A recorder recreated after process restart continues the persisted
-	// sequence instead of appending a second sequence=1.
+	// 进程重启后重建的 recorder 会接着已持久化的序号往下走，
+	// 而不是再追加一条 sequence=1。
 	restarted := NewTraceRecorder(store)
 	event := restarted.Record(context.Background(), TraceEvent{Type: TraceRetry, Source: TraceSourceRun, SessionID: "s1", RunID: "r1"})
 	if event.Sequence != 3 {

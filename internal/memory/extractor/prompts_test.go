@@ -50,9 +50,9 @@ func TestBuildExtractAutoOnlyPromptIncludesExistingManifest(t *testing.T) {
 }
 
 func TestBuildExtractAutoOnlyPromptNoTeamSection(t *testing.T) {
-	// Dual-path mode uses <scope> tags for user-level / project-level routing, but the
-	// "team memory" / "private or team" guidance must never appear in the auto-only
-	// prompt — MewCode keeps the user/project split simple, no team memory concept.
+	// 双路径模式用 <scope> 标签做用户级 / 项目级路由，但 "team memory" /
+	// "private or team" 这类引导绝不能出现在 auto-only 的
+	// prompt 里 —— MewCode 只保留简单的用户/项目二分，没有 team memory 这个概念。
 	got := BuildExtractAutoOnlyPrompt(3, "", false, "/home/test/.mewcode/memory/", "/tmp/proj/.mewcode/memory/")
 	for _, banned := range []string{
 		"team memor",
