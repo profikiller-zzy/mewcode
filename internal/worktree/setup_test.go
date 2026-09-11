@@ -167,6 +167,8 @@ func TestFindCanonicalGitRoot(t *testing.T) {
 	initTestRepo(t, repo)
 
 	root := FindCanonicalGitRoot(repo)
+	// 这个用例没有 chdir 进仓库，git 会原样回显传入的路径，不解析符号链接 ——
+	// 直接用输入比较；换成 canonicalPath 反而会在 macOS 上失败。
 	if root != repo {
 		t.Fatalf("expected %q, got %q", repo, root)
 	}

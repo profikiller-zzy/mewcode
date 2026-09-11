@@ -367,6 +367,16 @@ func TestMaybeRun_LockBlocks(t *testing.T) {
 	// 先手动获取锁
 	TryAcquireLock(memDir)
 
+	// 时间门把 lock 文件的 mtime 当作"上次整理时间"，再与会话文件的 mtime 比较。
+	// 会话文件在上面创建，时间早于锁，会被全部过滤掉 —— 测试就走不到锁检查。
+	// 必须显式把 mtime 推到锁之后：只靠执行顺序不可靠，两者落在同一毫秒时
+	// 亚毫秒精度会让比较偶然通过，表现为只在 -race 下必现的 flaky。
+	ahead := time.Now().Add(time.Second)
+	for i := 0; i < 6; i++ {
+		name := filepath.Join(sessDir, "s"+strconv.Itoa(i)+".jsonl")
+		os.Chtimes(name, ahead, ahead)
+	}
+
 	var logs []string
 	c := NewConsolidator(Deps{
 		MemoryDir:   memDir + "/",

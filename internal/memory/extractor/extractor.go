@@ -36,6 +36,11 @@ type Deps struct {
 	Conversation  *conversation.Manager   // 父对话的引用
 	AppendSystem  func(string)            // 可选：通知 TUI 已保存的记忆
 	DebugLogf     func(format string, args ...any) // 可选：调试日志
+
+	// ContextWindow / MaxOutputTokens 透传给派生 agent，让它的 Layer 2 压缩阈值
+	// 按 provider 的真实窗口换算（0 表示沿用 agent.New 的默认值）。
+	ContextWindow   int
+	MaxOutputTokens int
 }
 
 // Extractor 是后台记忆提取器。所有状态都封装在结构体字段中，并由 mu 保护。
@@ -177,6 +182,13 @@ func (e *Extractor) runExtraction(ctx context.Context, isTrailingRun bool) error
 	subAgent.MaxIterations = 5
 	subAgent.Checker = subChecker
 	subAgent.WorkDir = e.deps.ProjectRoot
+	// 压缩阈值跟随 provider 的真实窗口，和通过 Agent 工具派发的子 Agent 一致。
+	if e.deps.ContextWindow > 0 {
+		subAgent.ContextWindow = e.deps.ContextWindow
+	}
+	if e.deps.MaxOutputTokens > 0 {
+		subAgent.MaxOutputTokens = e.deps.MaxOutputTokens
+	}
 
 	// 驱动派生 Agent 执行到结束并排空事件通道；不展示流式文本，只关心文件写入。
 	ch := subAgent.Run(ctx, forkedConv)

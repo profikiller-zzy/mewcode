@@ -36,50 +36,36 @@ type AgentDefinition struct {
 	DisallowedTools []string `yaml:"disallowedTools"`
 	Model           string   `yaml:"model"`
 	MaxTurns        int      `yaml:"maxTurns"`
-
 	// permissionMode 覆盖父 Agent 的权限模式，只对当前 sub-agent 生效。合法取值与
-	// internal/permissions.PermissionMode 一致。
+	// permissions.PermissionMode 一致。
 	PermissionMode string `yaml:"permissionMode"`
-
-	// Effort 是给模型的任务复杂度提示（"low" | "medium" | "high" | int）。
-	// 目前只存储，尚未消费。
+	// Effort 是给模型的任务复杂度提示（"low" | "medium" | "high" | int）。目前只存储，尚未消费。
 	Effort any `yaml:"effort"`
-
 	// Skills 是 sub-agent 启动时要预加载的 skill 名。
 	Skills []string `yaml:"skills"`
-
 	// McpServers 是作用范围限定在当前 Agent 的 MCP server 名或内联配置。以 raw any
 	// 存储，这样将来的加载逻辑既能解释字符串引用，也能解释内联配置。
 	McpServers []any `yaml:"mcpServers"`
-
 	// RequiredMcpServers 是 Agent 的准入门槛：如果列出的 server 在加载时不可用，
 	// 该 Agent 会被 hasRequiredMcpServers 过滤掉。
 	RequiredMcpServers []string `yaml:"requiredMcpServers"`
-
 	// Hooks 是 Agent 启动时注册的、作用范围为 session 的 hook。以原始 YAML 存储；
 	// hooks 包会在消费时做类型检查。
 	Hooks any `yaml:"hooks"`
-
 	// Memory 在三种 scope 之一中启用持久化记忆。
 	Memory AgentMemoryScope `yaml:"memory"`
-
 	// Background 已废弃：异步 sub-agent 路径已整体移除（一律主 Agent 同步等待 +
 	// 子 Agent 并发运行）。字段保留解析只为让存量定义文件不报错，运行期不再消费。
 	Background bool `yaml:"background"`
-
 	// Isolation 为派生选择文件系统隔离模式。
 	Isolation IsolationMode `yaml:"isolation"`
-
 	// InitialPrompt 会被前置到第一轮 user turn（slash command 也能用）。
 	InitialPrompt string `yaml:"initialPrompt"`
-
 	// OmitMewcodeMd 从该 Agent 的 user context 中去掉 MEWCODE.md 层级。只读 Agent
 	// （Explore、Plan）跳过它可以省 token。
 	OmitMewcodeMd bool `yaml:"omitMewcodeMd"`
-
 	// SystemPrompt 是定义文件的 Markdown 正文。
 	SystemPrompt string `yaml:"-"`
-
 	// FilePath / Source / Filename 在加载时填充。
 	FilePath string `yaml:"-"`
 	Source   string `yaml:"-"`
@@ -174,7 +160,7 @@ func (d *AgentDefinition) ToSpec() SubAgentSpec {
 		PermissionMode:       d.PermissionMode,
 		Isolation:            d.Isolation,
 		InitialPrompt:        d.InitialPrompt,
-		OmitMewcodeMd:         d.OmitMewcodeMd,
+		OmitMewcodeMd:        d.OmitMewcodeMd,
 		Skills:               d.Skills,
 		Memory:               d.Memory,
 		McpServers:           d.McpServers,
@@ -205,4 +191,3 @@ func (d *AgentDefinition) HasRequiredMcpServers(availableServers []string) bool 
 	}
 	return true
 }
-

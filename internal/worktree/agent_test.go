@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+// canonicalPath 解析路径里的符号链接。macOS 上 t.TempDir() 返回 /var/...，
+// 而 git（以及 FindCanonicalGitRoot）输出的是解析后的 /private/var/...；
+// 直接比较字符串会因环境差异失败。
+func canonicalPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return resolved
+}
+
 func TestCreateAgentWorktree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -26,12 +38,14 @@ func TestCreateAgentWorktree(t *testing.T) {
 		t.Fatalf("CreateAgentWorktree failed: %v", err)
 	}
 
-	expectedPath := filepath.Join(repo, ".mewcode", "worktrees", "agent-a1234567")
+	// 返回值经 FindCanonicalGitRoot 解析过真实路径，断言前先对齐。
+	canonicalRepo := canonicalPath(t, repo)
+	expectedPath := filepath.Join(canonicalRepo, ".mewcode", "worktrees", "agent-a1234567")
 	if result.WorktreePath != expectedPath {
 		t.Fatalf("expected path %q, got %q", expectedPath, result.WorktreePath)
 	}
-	if result.GitRoot != repo {
-		t.Fatalf("expected git root %q, got %q", repo, result.GitRoot)
+	if result.GitRoot != canonicalRepo {
+		t.Fatalf("expected git root %q, got %q", canonicalRepo, result.GitRoot)
 	}
 	if result.HeadCommit == "" {
 		t.Fatal("expected non-empty head commit")

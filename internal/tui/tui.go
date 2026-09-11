@@ -401,11 +401,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileHistory = filehistory.New(wd, m.sessionID)
 		m.defaultTools.EditFile.FileHistory = m.fileHistory
 		m.defaultTools.WriteFile.FileHistory = m.fileHistory
-		m.registerAgentTools(client, p, p.Protocol, wd)
-		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic），
-		// 在 GetContextWindow 读取之前缓存到 p 上。
+		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic）。
+		// 必须先于 registerAgentTools —— 后者会把解析结果（含拉取值）烤进
+		// AgentTool，晚于它执行就只能拿到映射表里的保守值。
 		// 失败则静默降级到映射表 / 默认值。
 		llm.ResolveContextWindow(context.Background(), p)
+		m.registerAgentTools(client, p, p.Protocol, wd)
 		ag := agent.New(client, m.registry, p.Protocol)
 		ag.ContextWindow = p.GetContextWindow()
 		ag.MaxOutputTokens = p.GetMaxOutputTokens()
@@ -734,8 +735,13 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 	m.registry.Register(&agents.AgentTool{
 		Client:        client,
 		ModelResolver: llm.NewModelResolver(*providerCfg),
-		Registry:      m.registry,
-		Protocol:      protocol,
+		ModelAliases:  llm.AvailableModelAliases(*providerCfg),
+		// 子 Agent 的压缩阈值也按 provider 的真实窗口换算，不跟随 agent.New
+		// 写死的 200000 默认值。
+		ContextWindow:   providerCfg.GetContextWindow(),
+		MaxOutputTokens: providerCfg.GetMaxOutputTokens(),
+		Registry:        m.registry,
+		Protocol:        protocol,
 		ProgressCh:    m.subAgentProgressCh,
 		Loader:        loader,
 		Conversation:  m.conversation,
@@ -1058,27 +1064,37 @@ func (m *Model) installMemoryExtractor(ag *agent.Agent, wd, protocol string) *ex
 		return nil
 	}
 	conv := m.conversation
+	// 后台记忆 agent 的压缩阈值也跟随 provider 的真实窗口。
+	var ctxWindow, maxOutput int
+	if m.selectedProvider != nil {
+		ctxWindow = m.selectedProvider.GetContextWindow()
+		maxOutput = m.selectedProvider.GetMaxOutputTokens()
+	}
 	extr := extractor.InitExtractMemories(extractor.Deps{
-		MemoryDir:     memory.GetAutoMemPath(wd),
-		UserMemoryDir: memory.GetUserAutoMemPath(),
-		ProjectRoot:   wd,
-		Client:        m.client,
-		ToolRegistry:  m.registry,
-		Protocol:      protocol,
-		Conversation:  conv,
-		AppendSystem:  func(s string) { conv.AddSystemReminder(s) },
+		MemoryDir:       memory.GetAutoMemPath(wd),
+		UserMemoryDir:   memory.GetUserAutoMemPath(),
+		ProjectRoot:     wd,
+		Client:          m.client,
+		ToolRegistry:    m.registry,
+		Protocol:        protocol,
+		Conversation:    conv,
+		AppendSystem:    func(s string) { conv.AddSystemReminder(s) },
+		ContextWindow:   ctxWindow,
+		MaxOutputTokens: maxOutput,
 	})
 
 	// 记忆整理器：后台自动合并重复、删除过时、修正矛盾
 	consolidator := consolidation.NewConsolidator(consolidation.Deps{
-		MemoryDir:     memory.GetAutoMemPath(wd),
-		UserMemoryDir: memory.GetUserAutoMemPath(),
-		ProjectRoot:   wd,
-		Client:        m.client,
-		ToolRegistry:  m.registry,
-		Protocol:      protocol,
-		Conversation:  conv,
-		AppendSystem:  func(s string) { conv.AddSystemReminder(s) },
+		MemoryDir:       memory.GetAutoMemPath(wd),
+		UserMemoryDir:   memory.GetUserAutoMemPath(),
+		ProjectRoot:     wd,
+		Client:          m.client,
+		ToolRegistry:    m.registry,
+		Protocol:        protocol,
+		Conversation:    conv,
+		AppendSystem:    func(s string) { conv.AddSystemReminder(s) },
+		ContextWindow:   ctxWindow,
+		MaxOutputTokens: maxOutput,
 	})
 	m.memoryConsolidator = consolidator
 
@@ -1252,11 +1268,12 @@ func (m Model) handleProviderSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fileHistory = filehistory.New(wd, m.sessionID)
 		m.defaultTools.EditFile.FileHistory = m.fileHistory
 		m.defaultTools.WriteFile.FileHistory = m.fileHistory
-		m.registerAgentTools(client, p, p.Protocol, wd)
-		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic），
-		// 在 GetContextWindow 读取之前缓存到 p 上。
+		// 尽力而为：从 provider 拉一次模型的上下文窗口（仅 Anthropic）。
+		// 必须先于 registerAgentTools —— 后者会把解析结果（含拉取值）烤进
+		// AgentTool，晚于它执行就只能拿到映射表里的保守值。
 		// 失败则静默降级到映射表 / 默认值。
 		llm.ResolveContextWindow(context.Background(), p)
+		m.registerAgentTools(client, p, p.Protocol, wd)
 		ag := agent.New(client, m.registry, p.Protocol)
 		ag.ContextWindow = p.GetContextWindow()
 		ag.MaxOutputTokens = p.GetMaxOutputTokens()

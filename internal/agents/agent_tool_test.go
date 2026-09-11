@@ -2,10 +2,13 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"mewcode/internal/agent"
 	"mewcode/internal/conversation"
+	"mewcode/internal/llm"
 	"mewcode/internal/permissions"
 	"mewcode/internal/teams"
 	"mewcode/internal/tools"
@@ -145,6 +148,97 @@ func TestAgentToolIsConcurrencySafe(t *testing.T) {
 	// 没有 team_name 时不会走 teammate 路径，仍按同步子 Agent 处理。
 	if !withTeams.IsConcurrencySafe(map[string]any{"description": "x"}) {
 		t.Error("spawn without team_name should be concurrency-safe")
+	}
+}
+
+func TestAgentToolSchemaDescribesDispatchModes(t *testing.T) {
+	tool := &AgentTool{}
+	description := tool.Description()
+	for _, want := range []string{
+		"Omit \"subagent_type\" to fork a snapshot",
+		"Set \"subagent_type\" to start a fresh-context agent",
+		"Ordinary sub-agent calls are synchronous",
+		"long-running team teammate",
+	} {
+		if !strings.Contains(description, want) {
+			t.Errorf("Agent description missing %q: %s", want, description)
+		}
+	}
+
+	schema := tool.Schema()["input_schema"].(map[string]any)["properties"].(map[string]any)
+	propertyDescription := func(name string) string {
+		return schema[name].(map[string]any)["description"].(string)
+	}
+	if got := propertyDescription("description"); !strings.Contains(got, "not the task instructions") {
+		t.Errorf("description parameter is misleading: %q", got)
+	}
+	if got := propertyDescription("prompt"); !strings.Contains(got, "fork") || !strings.Contains(got, "fresh-context") {
+		t.Errorf("prompt parameter does not explain both context modes: %q", got)
+	}
+	if got := propertyDescription("team_name"); !strings.Contains(got, "created automatically") {
+		t.Errorf("team_name parameter does not describe automatic team creation: %q", got)
+	}
+}
+
+// 子 Agent 的 Layer 2 压缩阈值按 provider 的真实窗口换算。不透传时 agent.New
+// 写死的 200000 会让小窗口模型压缩来不及触发、大窗口模型被过早压缩。
+func TestApplyProviderLimits(t *testing.T) {
+	sub := agent.New(&fakeLLMClient{}, tools.NewRegistry(), "anthropic")
+	if sub.ContextWindow != 200000 {
+		t.Fatalf("baseline should be the agent.New default, got %d", sub.ContextWindow)
+	}
+
+	tool := &AgentTool{ContextWindow: 128000, MaxOutputTokens: 8192}
+	tool.applyProviderLimits(sub)
+	if sub.ContextWindow != 128000 {
+		t.Errorf("ContextWindow = %d, want 128000", sub.ContextWindow)
+	}
+	if sub.MaxOutputTokens != 8192 {
+		t.Errorf("MaxOutputTokens = %d, want 8192", sub.MaxOutputTokens)
+	}
+
+	// 未配置（0）时不覆盖 agent.New 的默认值。
+	fresh := agent.New(&fakeLLMClient{}, tools.NewRegistry(), "anthropic")
+	(&AgentTool{}).applyProviderLimits(fresh)
+	if fresh.ContextWindow != 200000 {
+		t.Errorf("zero limits must not clobber the default window, got %d", fresh.ContextWindow)
+	}
+	if fresh.MaxOutputTokens != 0 {
+		t.Errorf("zero limits must not clobber the default output budget, got %d", fresh.MaxOutputTokens)
+	}
+}
+
+func TestSelectClientFallsBackWhenAliasUnresolvable(t *testing.T) {
+	// 档位名解析失败（例如非 Claude provider 拿到 haiku）时必须回退到主 Agent
+	// 的 client：宁可让子 Agent 用主模型跑，也不能把请求发给一个端点不存在的
+	// 模型 —— 那要等发请求才报错，排查成本高得多。
+	parent := &fakeLLMClient{reply: "x"}
+	tool := &AgentTool{
+		Client: parent,
+		ModelResolver: func(string) (llm.Client, error) {
+			return nil, errors.New("alias not resolvable for this provider")
+		},
+	}
+	if got := tool.selectClient("haiku", ""); got != parent {
+		t.Error("unresolvable alias must fall back to the parent client")
+	}
+
+	alt := &fakeLLMClient{reply: "y"}
+	tool.ModelResolver = func(string) (llm.Client, error) { return alt, nil }
+	if got := tool.selectClient("haiku", ""); got != alt {
+		t.Error("resolvable alias should use the resolved client")
+	}
+
+	// 模型为空 / inherit 直接走父 client，不咨询 resolver。
+	tool.ModelResolver = func(string) (llm.Client, error) {
+		t.Error("resolver must not be consulted for empty/inherit")
+		return nil, nil
+	}
+	if got := tool.selectClient("", ""); got != parent {
+		t.Error("empty model should return the parent client")
+	}
+	if got := tool.selectClient("inherit", ""); got != parent {
+		t.Error("inherit should return the parent client")
 	}
 }
 

@@ -41,6 +41,18 @@ type ProviderConfig struct {
 	ContextWindow   int    `yaml:"context_window"`
 	MaxOutputTokens int    `yaml:"max_output_tokens"`
 
+	// ModelAliases 把子 Agent 使用的档位名（haiku / sonnet / opus）映射到
+	// 当前 provider 真正可用的模型 ID：
+	//
+	//	model_aliases:
+	//	  haiku: deepseek-chat        # explore 这类轻量角色用它
+	//	  sonnet: deepseek-reasoner
+	//
+	// 内置的 Claude 档位映射只在主模型本身是 Claude 系列时才生效。其他
+	// provider 不配这个字段的话，档位名会安全地回退成主模型 —— 而不是把
+	// claude-* 的模型 ID 发到别家端点上换一个 model not found。
+	ModelAliases map[string]string `yaml:"model_aliases"`
+
 	// fetchedContextWindow 缓存从 provider 的 /v1/models 端点自动拉取的
 	// max_input_tokens（GetContextWindow 的第 2 层）。在 client 初始化时
 	// 通过 SetFetchedContextWindow 填一次；0 表示「没拉到」。

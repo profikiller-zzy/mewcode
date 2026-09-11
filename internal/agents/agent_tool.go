@@ -66,12 +66,24 @@ const ForkQuerySource = "agent:builtin:" + ForkAgentType
 type AgentTool struct {
 	Client        llm.Client
 	ModelResolver func(string) (llm.Client, error)
-	Registry      *tools.Registry
-	Protocol      string
-	ProgressCh    chan<- SubAgentProgress
-	Loader        *AgentLoader
-	Conversation  *conversation.Manager // 父对话，fork 需要
-	TeamMgr       *teams.TeamManager    // 可选，有它才支持 team_name 参数
+	// ModelAliases 是当前 provider 可用的档位名（llm.AvailableModelAliases 的产出），
+	// 只用于生成 model 参数的 enum：让模型只填这个端点真正认识的档位名，
+	// 而不是照搬 Claude 的 sonnet/opus/haiku 去撞 model not found。
+	// 为空时 schema 不给 enum，模型可以自由填 provider 支持的具体模型名。
+	ModelAliases []string
+	Registry     *tools.Registry
+	Protocol     string
+	ProgressCh   chan<- SubAgentProgress
+	Loader       *AgentLoader
+	Conversation *conversation.Manager // 父对话，fork 需要
+	TeamMgr      *teams.TeamManager    // 可选，有它才支持 team_name 参数
+
+	// ContextWindow / MaxOutputTokens 是当前 provider 的解析结果，spawn 时透传给
+	// 子 Agent。不设的话 [agent.New] 会给子 Agent 写死 200000 的默认窗口 —— 与
+	// provider 实际配置脱节：真实窗口更小的模型压缩来不及触发，更大的则被过早
+	// 压缩、白白丢上下文。两者都是 Layer 2 压缩阈值的换算依据。
+	ContextWindow   int
+	MaxOutputTokens int
 
 	// ParentChecker 是父 Agent 的权限检查器。Sandbox 和 RuleEngine 复用父级的；
 	// 只有当 sub-agent 定义 / 调用里指定了不同的 permissionMode 时才覆盖 Mode。
@@ -103,11 +115,15 @@ func (t *AgentTool) IsConcurrencySafe(args map[string]any) bool {
 }
 
 func (t *AgentTool) Description() string {
-	desc := `Launch a sub-agent to handle a complex task. Each sub-agent runs independently with its own context. The sub-agent cannot see the current conversation.
+	desc := `Launch a sub-agent to handle a complex task.
 
-This is ONE tool with multiple roles. Roles are NOT separate tools — you pick one by passing its name in the "subagent_type" parameter. Do not search for a tool named after a role; call THIS tool ("Agent") and set "subagent_type".
+There are two ordinary modes:
+1. Omit "subagent_type" to fork a snapshot of the current conversation. The task prompt is appended to that copied context.
+2. Set "subagent_type" to start a fresh-context agent from that role definition. The task prompt must contain all context the agent needs.
 
-Available roles for the "subagent_type" parameter:`
+Ordinary sub-agent calls are synchronous: the caller waits for the final result in the tool result. Multiple independent Agent calls in one model response may run concurrently. To start a long-running team teammate instead, provide "team_name" and use SendMessage for follow-up communication.
+
+This is ONE tool with multiple roles. Roles are NOT separate tools — choose one with "subagent_type". Available roles are:`
 
 	if t.Loader != nil {
 		for _, name := range t.Loader.ListNames() {
@@ -126,16 +142,28 @@ Example call shape:
 {
   "name": "Agent",
   "input": {
-    "subagent_type": "<role from the list above>",
     "description": "Short task label",
-    "prompt": "Detailed instructions — the sub-agent has zero prior context"
+    "prompt": "Detailed task instructions"
   }
 }
 
-Write a detailed prompt explaining what the sub-agent should do and why — it has no prior context (omit subagent_type to fork the current conversation instead, inheriting its context).
-When tasks are independent, launch multiple sub-agents in parallel by making multiple Agent tool calls in a single response: they run concurrently and every result returns together.
-When multiple parallel sub-agents may write files, pass isolation "worktree" so their edits don't collide.`
+For a fresh-context role agent, write a detailed prompt explaining what it should do and why. For a fork, the prompt is added to the inherited conversation. When multiple agents may write files, pass isolation "worktree" to give each applicable agent a separate worktree.`
 	return desc
+}
+
+// modelProperty 生成 model 参数的定义。enum 只列当前 provider 认识的档位名
+// （见 llm.AvailableModelAliases）；没有可枚举的档位时干脆不给 enum，让模型
+// 自由填 provider 支持的具体模型名。
+func (t *AgentTool) modelProperty() map[string]any {
+	prop := map[string]any{"type": "string"}
+	if len(t.ModelAliases) > 0 {
+		prop["enum"] = t.ModelAliases
+		prop["description"] = "Model tier for this agent. One of: " +
+			strings.Join(t.ModelAliases, ", ") + ". Omit to inherit the current model."
+		return prop
+	}
+	prop["description"] = "Override the model for this agent. Must be a model name the current provider accepts; omit to inherit the current model."
+	return prop
 }
 
 func (t *AgentTool) Schema() map[string]any {
@@ -152,43 +180,40 @@ func (t *AgentTool) Schema() map[string]any {
 			"properties": map[string]any{
 				"description": map[string]any{
 					"type":        "string",
-					"description": "A short (3-5 word) description of the task",
+					"description": "A short label for progress and result messages. This is not the task instructions sent to the sub-agent.",
 				},
+				// prompt 会作为本次subagent的user message，这是主agent分配任务时传入的
 				"prompt": map[string]any{
 					"type":        "string",
-					"description": "The task for the agent to perform. Be detailed — the agent has no context from this conversation.",
+					"description": "The task instructions. For a fresh-context role agent, include all required context; for a fork, this is appended to the copied conversation; for a teammate, this is the initial assignment.",
 				},
 				"subagent_type": map[string]any{
 					"type":        "string",
 					"enum":        agentTypes,
-					"description": "The type of agent to use. If omitted, forks current conversation context.",
+					"description": "Optional role for a fresh-context agent. Omit to fork a snapshot of the current conversation and append prompt as the task.",
 				},
-				"model": map[string]any{
-					"type":        "string",
-					"enum":        []string{"sonnet", "opus", "haiku"},
-					"description": "Override the model for this agent.",
-				},
+				"model": t.modelProperty(),
 				"name": map[string]any{
 					"type":        "string",
-					"description": "Name for a team teammate (requires team_name), enabling SendMessage communication.",
+					"description": "Name of the long-running teammate. Use only with team_name; this is the name used by SendMessage.",
 				},
 				"isolation": map[string]any{
 					"type":        "string",
 					"enum":        []string{"worktree"},
-					"description": "Isolation mode. Set to 'worktree' to give the agent its own git worktree so its file edits don't collide with peers or the lead. REQUIRED when spawning two or more agents in parallel (sub-agents or teammates) that may write files; STRONGLY RECOMMENDED for any single agent doing non-trivial file edits while the lead is still working in the same repo. Skip only for read-only tasks (explore/grep/plan) or when you explicitly want the agent to share your working tree.",
+					"description": "For a role agent or teammate, create a dedicated git worktree so edits do not collide with the lead or peers. It is ignored by the current fork path.",
 				},
 				"plan_mode_required": map[string]any{
 					"type":        "boolean",
-					"description": "Only meaningful together with team_name. When true, the teammate starts in plan mode: it can read and investigate but cannot modify anything until it submits a plan and you approve it via SendMessage with type='plan_approval_response'. Use it for risky or ambiguous tasks where a wrong direction would cost a lot of rework.",
+					"description": "Only for team_name. When true, the teammate starts read-only, submits a plan, and waits for SendMessage approval before editing.",
 				},
 				"team_name": map[string]any{
 					"type":        "string",
-					"description": "REQUIRED when creating team members. Spawns the agent as a long-running teammate under this team (created via TeamCreate). Unlike regular sub-agents, team members run in their own terminal, persist after the lead returns, and communicate with each other via SendMessage. Without team_name the agent runs as a one-shot sub-agent that blocks and returns inline.",
+					"description": "Create a long-running teammate under this team. The caller returns immediately; use SendMessage for follow-up work and communication. If the team does not exist, it is created automatically.",
 				},
 				"mode": map[string]any{
 					"type":        "string",
 					"enum":        []string{"default", "acceptEdits", "plan", "bypassPermissions"},
-					"description": "Permission mode override for the spawned agent (e.g., 'plan' to require plan approval).",
+					"description": "Permission mode override for a role agent or teammate. Forks inherit the parent permission mode.",
 				},
 			},
 			"required": []string{"description", "prompt"},
@@ -286,12 +311,25 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 	return t.runSync(ctx, spec, description, prompt, modelOverride, isolation)
 }
 
+// applyProviderLimits 把 provider 的窗口 / 输出上限透传给子 Agent。Layer 2 的
+// 压缩阈值靠这两个值换算，而 agent.New 写死的默认窗口是 200000，与真实模型无关。
+// 为 0（未配置）时保持默认值不动。
+func (t *AgentTool) applyProviderLimits(sub *agent.Agent) {
+	if t.ContextWindow > 0 {
+		sub.ContextWindow = t.ContextWindow
+	}
+	if t.MaxOutputTokens > 0 {
+		sub.MaxOutputTokens = t.MaxOutputTokens
+	}
+}
+
 func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description, prompt, modelOverride, isolation string) tools.ToolResult {
 	subRegistry := FilterToolsForAgent(t.Registry, spec.Tools, spec.DisallowedTools, false)
 	client := t.selectClient(spec.Model, modelOverride)
 
 	subAgent := agent.New(client, subRegistry, t.Protocol)
 	subAgent.Checker = deriveSubAgentChecker(t.ParentChecker, spec.PermissionMode)
+	t.applyProviderLimits(subAgent)
 	if spec.MaxTurns > 0 {
 		subAgent.MaxIterations = spec.MaxTurns
 	} else {
@@ -492,6 +530,7 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 
 	subAgent := agent.New(client, subRegistry, t.Protocol)
 	subAgent.Checker = t.ParentChecker // fork 原样继承父 Agent 的权限状态
+	t.applyProviderLimits(subAgent)
 	subAgent.MaxIterations = 200
 
 	// fork 同步运行：主 Agent 阻塞在这条工具调用上直到 fork 结束，结果作为工具

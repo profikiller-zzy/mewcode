@@ -13,11 +13,11 @@ import (
 type TaskStatus string
 
 const (
-	TaskPending    TaskStatus = "pending"
-	TaskRunning    TaskStatus = "running"
-	TaskCompleted  TaskStatus = "completed"
-	TaskFailed     TaskStatus = "failed"
-	TaskCancelled  TaskStatus = "cancelled"
+	TaskPending   TaskStatus = "pending"
+	TaskRunning   TaskStatus = "running"
+	TaskCompleted TaskStatus = "completed"
+	TaskFailed    TaskStatus = "failed"
+	TaskCancelled TaskStatus = "cancelled"
 )
 
 type Task struct {
@@ -32,9 +32,9 @@ type Task struct {
 }
 
 type TaskManager struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
-	nextID int
+	mu            sync.Mutex
+	tasks         map[string]*Task
+	nextID        int
 	notifications []TaskNotification
 }
 
@@ -178,33 +178,27 @@ func (tm *TaskManager) CancelTask(id string) bool {
 // （AgentDefinition）和执行层（runSync / runFork）之间的桥梁。
 // 内置 agent 跳过文件解析，直接通过 BuiltinSpecs 实例化这个结构。
 type SubAgentSpec struct {
-	Name                 string
-	Description          string
-	Tools                []string
-	DisallowedTools      []string
+	Name            string
+	Description     string
+	Tools           []string
+	DisallowedTools []string
+	// SystemPromptOverride 这个字段封装在system-reminder标签中，放在user message里
 	SystemPromptOverride string
 	MaxTurns             int
 	Model                string
-
 	// PermissionMode 在 sub-agent 运行期间覆盖父 agent 的权限模式。
 	// 空字符串表示继承自父 agent。
 	PermissionMode string
-
 	// Isolation 选择文件系统隔离模式；"worktree" 会创建一个临时的 git worktree。
 	Isolation IsolationMode
-
 	// InitialPrompt 会被前置到第一轮 user 对话。
 	InitialPrompt string
-
 	// OmitMewcodeMd 把这个 agent 的 userContext 里的 MEWCODE.md 层级去掉。
 	OmitMewcodeMd bool
-
 	// Skills 是 sub-agent 启动时要预加载的 skill 名。
 	Skills []string
-
 	// Memory 在三种作用域之一里开启持久化记忆。
 	Memory AgentMemoryScope
-
 	// McpServers / RequiredMcpServers / Hooks / Effort 把 frontmatter 数据往后传，
 	// 这样以后新增通道时可以直接消费，不用再做一次 schema 迁移。
 	McpServers         []any
@@ -248,6 +242,7 @@ List the most critical files for implementing this change:
 - path/to/file1 — reason
 - path/to/file2 — reason`
 
+// BuiltinSpecs 内置的自定义subagent
 var BuiltinSpecs = map[string]SubAgentSpec{
 	"general-purpose": {
 		Name:        "general-purpose",
@@ -269,6 +264,10 @@ var BuiltinSpecs = map[string]SubAgentSpec{
 		// 上限会踩坑：当 LLM 需要发很多次 ToolSearch/Glob/Grep 来摸清一个陌生 repo 时，
 		// spawn 会在还没报出任何有用信息前
 		// 就以 "reached maximum iterations" 失败。
+		//
+		// "haiku" 是一个档位偏好，不是字面模型名：Claude provider 下解析成
+		// claude-haiku；其他 provider 在 config 里配 model_aliases 映射到自己的
+		// 轻量模型；都没配则回退主模型（解析失败由 selectClient 兜底）。
 		Model: "haiku",
 	},
 }

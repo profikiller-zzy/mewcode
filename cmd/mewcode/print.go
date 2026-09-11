@@ -154,8 +154,12 @@ func runPrint(userPrompt string, cfg *config.AppConfig, hookCfgs []hooks.Hook, o
 	registry.Register(&agents.AgentTool{
 		Client:        client,
 		ModelResolver: llm.NewModelResolver(*p),
-		Registry:      registry,
-		Protocol:      p.Protocol,
+		ModelAliases:  llm.AvailableModelAliases(*p),
+		// 子 Agent 的压缩阈值也按 provider 的真实窗口换算。
+		ContextWindow:   p.GetContextWindow(),
+		MaxOutputTokens: p.GetMaxOutputTokens(),
+		Registry:        registry,
+		Protocol:        p.Protocol,
 		ProgressCh:    subProgressCh,
 		Loader:        loader,
 		Conversation:  conv,

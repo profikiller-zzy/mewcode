@@ -40,6 +40,11 @@ type Deps struct {
 	Conversation  *conversation.Manager // 父 Agent 对话
 	AppendSystem  func(string)          // 通知 TUI
 	DebugLogf     func(string, ...any)  // 调试日志
+
+	// ContextWindow / MaxOutputTokens 透传给派生 agent，让它的 Layer 2 压缩阈值
+	// 按 provider 的真实窗口换算（0 表示沿用 agent.New 的默认值）。
+	ContextWindow   int
+	MaxOutputTokens int
 }
 
 // Consolidator 管理后台记忆整理的状态和执行。
@@ -147,6 +152,13 @@ func (c *Consolidator) run(ctx context.Context, sessionIDs []string, priorMtime 
 	subAgent.MaxIterations = 15 // 整理可能需要多轮读写
 	subAgent.Checker = subChecker
 	subAgent.WorkDir = c.deps.ProjectRoot
+	// 压缩阈值跟随 provider 的真实窗口，和通过 Agent 工具派发的子 Agent 一致。
+	if c.deps.ContextWindow > 0 {
+		subAgent.ContextWindow = c.deps.ContextWindow
+	}
+	if c.deps.MaxOutputTokens > 0 {
+		subAgent.MaxOutputTokens = c.deps.MaxOutputTokens
+	}
 
 	startTime := time.Now()
 	ch := subAgent.Run(ctx, conv)

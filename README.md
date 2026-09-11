@@ -61,6 +61,19 @@ permission_mode: default
 
 protocol 支持 anthropic、openai 和 openai-compat。API Key 也可以通过环境变量提供：Anthropic 使用 ANTHROPIC_API_KEY，OpenAI 和 OpenAI 兼容服务使用 OPENAI_API_KEY。
 
+子 Agent 的 `explore` 角色偏好轻量模型（档位名 `haiku`）。Claude 系 provider 会自动把它解析成 `claude-haiku`；其他 provider 需要在这里显式映射到自己的模型，不配则回退用主模型：
+
+~~~
+providers:
+  - name: deepseek
+    protocol: openai-compat
+    base_url: https://api.deepseek.com
+    model: deepseek-chat
+    model_aliases:
+      haiku: deepseek-chat
+      sonnet: deepseek-reasoner
+~~~
+
 请不要把真实 API Key 提交到 Git。建议使用环境变量，并将本地覆盖配置放入 .mewcode/config.local.yaml。
 
 ### 启动
@@ -138,6 +151,7 @@ mewcode --teammate --team-name <team-name> --agent-name <agent-name>
 | providers[].thinking | 是否启用思考模式 |
 | providers[].context_window | 可选，覆盖上下文窗口 |
 | providers[].max_output_tokens | 可选，覆盖最大输出 Token 数 |
+| providers[].model_aliases | 可选，把子 Agent 的档位名（haiku/sonnet/opus）映射到本 provider 的模型；不配则档位名回退成主模型 |
 | permission_mode | 默认权限模式 |
 | mcp_servers | MCP Server 配置，可使用命令或 HTTP/SSE |
 | hooks | 工具生命周期 Hook |

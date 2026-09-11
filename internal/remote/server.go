@@ -318,7 +318,7 @@ func (s *Server) initAgent() error {
 	}
 
 	s.wireSkillsToAgent(wd)
-	s.memoryExtractor = installMemExtractor(ag, wd, p.Protocol, client, s.registry, s.conv)
+	s.memoryExtractor = installMemExtractor(ag, wd, p, client, s.registry, s.conv)
 
 	gitRoot := worktree.FindCanonicalGitRoot(wd)
 	s.registry.Register(&tools.EnterWorktreeTool{SessionID: s.sessionID, RepoRoot: gitRoot})
@@ -358,8 +358,12 @@ func (s *Server) registerTools(client llm.Client, p *config.ProviderConfig, wd s
 	s.registry.Register(&agents.AgentTool{
 		Client:        client,
 		ModelResolver: llm.NewModelResolver(*p),
-		Registry:      s.registry,
-		Protocol:      p.Protocol,
+		ModelAliases:  llm.AvailableModelAliases(*p),
+		// 子 Agent 的压缩阈值也按 provider 的真实窗口换算。
+		ContextWindow:   p.GetContextWindow(),
+		MaxOutputTokens: p.GetMaxOutputTokens(),
+		Registry:        s.registry,
+		Protocol:        p.Protocol,
 		ProgressCh:    subProgressCh,
 		Loader:        loader,
 		Conversation:  s.conv,
@@ -1058,16 +1062,18 @@ func buildSkillSection(catalog *skills.Catalog, wd string) string {
 	return sb.String()
 }
 
-func installMemExtractor(ag *agent.Agent, wd, protocol string, client llm.Client, registry *tools.Registry, conv *conversation.Manager) *extractor.Extractor {
+func installMemExtractor(ag *agent.Agent, wd string, p *config.ProviderConfig, client llm.Client, registry *tools.Registry, conv *conversation.Manager) *extractor.Extractor {
 	extr := extractor.InitExtractMemories(extractor.Deps{
-		MemoryDir:     memory.GetAutoMemPath(wd),
-		UserMemoryDir: memory.GetUserAutoMemPath(),
-		ProjectRoot:   wd,
-		Client:        client,
-		ToolRegistry:  registry,
-		Protocol:      protocol,
-		Conversation:  conv,
-		AppendSystem:  func(s string) { conv.AddSystemReminder(s) },
+		MemoryDir:       memory.GetAutoMemPath(wd),
+		UserMemoryDir:   memory.GetUserAutoMemPath(),
+		ProjectRoot:     wd,
+		Client:          client,
+		ToolRegistry:    registry,
+		Protocol:        p.Protocol,
+		Conversation:    conv,
+		AppendSystem:    func(s string) { conv.AddSystemReminder(s) },
+		ContextWindow:   p.GetContextWindow(),
+		MaxOutputTokens: p.GetMaxOutputTokens(),
 	})
 	ag.OnLoopComplete = func(_ *conversation.Manager) {
 		_ = extr.Execute(context.Background())
