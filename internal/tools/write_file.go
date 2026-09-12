@@ -14,11 +14,11 @@ type WriteFileTool struct {
 	FileStateCache *FileStateCache
 }
 
-func (t *WriteFileTool) Name() string            { return "WriteFile" }
+func (t *WriteFileTool) Name() string { return "WriteFile" }
 
-func (t *WriteFileTool) Description() string     { return WriteFileDescription }
+func (t *WriteFileTool) Description() string { return WriteFileDescription }
 
-func (t *WriteFileTool) Category() ToolCategory  { return CategoryWrite }
+func (t *WriteFileTool) Category() ToolCategory { return CategoryWrite }
 
 func (t *WriteFileTool) Schema() map[string]any {
 	return map[string]any{
@@ -35,8 +35,9 @@ func (t *WriteFileTool) Schema() map[string]any {
 	}
 }
 
-func (t *WriteFileTool) Execute(_ context.Context, args map[string]any) ToolResult {
+func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) ToolResult {
 	filePath, _ := args["file_path"].(string)
+	filePath = ResolvePath(ctx, filePath)
 	content, _ := args["content"].(string)
 	if filePath == "" {
 		return ToolResult{Output: "Error: file_path is required", IsError: true}

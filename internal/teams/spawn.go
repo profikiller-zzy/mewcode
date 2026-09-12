@@ -66,7 +66,7 @@ func SpawnTeammate(ctx context.Context, cfg TeammateSpawnConfig) (*SpawnResult, 
 
 	switch cfg.Team.Mode {
 	case ModeInProcess:
-		ch := StartInProcessMember(
+		ch := StartInProcessMemberWithConfig(
 			ctx,
 			cfg.Team,
 			cfg.MemberName,
@@ -75,15 +75,9 @@ func SpawnTeammate(ctx context.Context, cfg TeammateSpawnConfig) (*SpawnResult, 
 			cfg.Protocol,
 			cfg.Task,
 			cfg.Addendum,
+			cfg.Workdir,
+			cfg.Checker,
 		)
-		// Workdir 作用到刚注册的成员的 Agent 上，这样每个 file/Bash 工具的
-		// 相对路径都解析到隔离目录里。
-		if m, ok := cfg.Team.Members[cfg.MemberName]; ok && m.AgentRef != nil {
-			if cfg.Workdir != "" {
-				m.AgentRef.WorkDir = cfg.Workdir
-			}
-			m.AgentRef.Checker = cfg.Checker
-		}
 		return &SpawnResult{Mode: ModeInProcess, EventCh: ch}, nil
 
 	case ModeTmux:

@@ -13,11 +13,11 @@ import (
 
 type GrepTool struct{}
 
-func (t *GrepTool) Name() string            { return "Grep" }
+func (t *GrepTool) Name() string { return "Grep" }
 
-func (t *GrepTool) Description() string     { return GrepDescription }
+func (t *GrepTool) Description() string { return GrepDescription }
 
-func (t *GrepTool) Category() ToolCategory  { return CategoryRead }
+func (t *GrepTool) Category() ToolCategory { return CategoryRead }
 
 func (t *GrepTool) Schema() map[string]any {
 	return map[string]any{
@@ -35,13 +35,14 @@ func (t *GrepTool) Schema() map[string]any {
 	}
 }
 
-func (t *GrepTool) Execute(_ context.Context, args map[string]any) ToolResult {
+func (t *GrepTool) Execute(ctx context.Context, args map[string]any) ToolResult {
 	pattern, _ := args["pattern"].(string)
 	basePath, _ := args["path"].(string)
 	include, _ := args["include"].(string)
 	if basePath == "" {
 		basePath = "."
 	}
+	basePath = ResolvePath(ctx, basePath)
 	if pattern == "" {
 		return ToolResult{Output: "Error: pattern is required", IsError: true}
 	}

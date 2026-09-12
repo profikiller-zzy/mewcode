@@ -6,6 +6,7 @@ import (
 
 	"mewcode/internal/agent"
 	"mewcode/internal/llm"
+	"mewcode/internal/permissions"
 	"mewcode/internal/tools"
 )
 
@@ -26,8 +27,44 @@ func StartInProcessMember(
 	task string,
 	addendum string,
 ) <-chan agent.AgentEvent {
+	return startInProcessMember(ctx, team, memberName, client, registry, protocol, task, addendum, "", nil)
+}
+
+// StartInProcessMemberWithConfig is the worktree-aware variant used by the
+// Agent tool. Workdir and Checker are installed before the goroutine starts,
+// eliminating a race where the first model turn could run with the lead's
+// directory or permissions.
+func StartInProcessMemberWithConfig(
+	ctx context.Context,
+	team *Team,
+	memberName string,
+	client llm.Client,
+	registry *tools.Registry,
+	protocol string,
+	task string,
+	addendum string,
+	workdir string,
+	checker *permissions.Checker,
+) <-chan agent.AgentEvent {
+	return startInProcessMember(ctx, team, memberName, client, registry, protocol, task, addendum, workdir, checker)
+}
+
+func startInProcessMember(
+	ctx context.Context,
+	team *Team,
+	memberName string,
+	client llm.Client,
+	registry *tools.Registry,
+	protocol string,
+	task string,
+	addendum string,
+	workdir string,
+	checker *permissions.Checker,
+) <-chan agent.AgentEvent {
 	member := team.AddMember(memberName, client, registry, protocol)
 	member.Progress = NewTeammateProgress(memberName, team.Name, randomVerb())
+	member.AgentRef.WorkDir = workdir
+	member.AgentRef.Checker = checker
 
 	memberCtx, cancel := context.WithCancel(ctx)
 	member.Active = true
@@ -83,4 +120,3 @@ func InjectPendingMessages(team *Team, memberName string) string {
 	_ = team.MailBox.MarkAllRead(memberName)
 	return sb.String()
 }
-

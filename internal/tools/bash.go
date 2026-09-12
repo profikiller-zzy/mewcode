@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -87,11 +88,11 @@ type BashTool struct {
 	SandboxConfig sandbox.Config  // 沙箱的路径和网络权限配置
 }
 
-func (t *BashTool) Name() string            { return "Bash" }
+func (t *BashTool) Name() string { return "Bash" }
 
-func (t *BashTool) Description() string     { return BashDescription }
+func (t *BashTool) Description() string { return BashDescription }
 
-func (t *BashTool) Category() ToolCategory  { return CategoryCommand }
+func (t *BashTool) Category() ToolCategory { return CategoryCommand }
 
 // IsConcurrencySafe 只读命令可以跟别的只读工具并发，会改东西的命令必须独占。
 //
@@ -135,7 +136,18 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]any) ToolResult 
 	// 如果沙箱可用，将命令包装到沙箱内执行
 	actualCommand := command
 	if t.Sandbox != nil && t.Sandbox.Available() {
-		wrapped, err := t.Sandbox.Wrap(command, t.SandboxConfig)
+		sandboxConfig := t.SandboxConfig
+		if workDir := WorkDir(ctx); workDir != "" {
+			// The BashTool instance is shared by agents. Derive a per-call
+			// profile instead of mutating the shared config, so a subagent can
+			// write only inside its own worktree.
+			sandboxConfig.AllowWrite = []string{workDir, os.TempDir()}
+			sandboxConfig.DenyWrite = append(append([]string{}, sandboxConfig.DenyWrite...),
+				filepath.Join(workDir, ".mewcode", "config.yaml"),
+				filepath.Join(workDir, ".mewcode", "permissions.local.json"),
+			)
+		}
+		wrapped, err := t.Sandbox.Wrap(command, sandboxConfig)
 		if err == nil {
 			actualCommand = wrapped
 		}
@@ -146,7 +158,9 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]any) ToolResult 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
-	if t.WorkDir != "" {
+	if workDir := WorkDir(ctx); workDir != "" {
+		cmd.Dir = workDir
+	} else if t.WorkDir != "" {
 		cmd.Dir = t.WorkDir
 	}
 

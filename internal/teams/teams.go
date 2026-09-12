@@ -33,12 +33,14 @@ func teamsBaseDir() string {
 	return filepath.Join(home, ".mewcode", "teams")
 }
 
+// Member agent team 中的一个成员定义
 type Member struct {
 	Name     string
 	AgentRef *agent.Agent
 	Conv     *conversation.Manager
 	Active   bool
-	Cancel   context.CancelFunc
+	// Lead 停止它的入口
+	Cancel context.CancelFunc
 	// PaneID 是 tmux/iTerm spawn 时分配的后端相关句柄
 	// （例如 window 或 tab 名）。in-process 成员为空。
 	PaneID   string
@@ -46,9 +48,10 @@ type Member struct {
 
 	// 以下几个是要落盘的元信息，运行时不参与调度，只在写 config.json
 	// 和从磁盘恢复团队时用到。
-	AgentID      string
-	AgentType    string
-	Model        string
+	AgentID   string
+	AgentType string
+	Model     string
+	// Worker 独立工作目录
 	WorktreePath string
 	JoinedAt     int64
 }

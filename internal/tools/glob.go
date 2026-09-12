@@ -11,11 +11,11 @@ import (
 
 type GlobTool struct{}
 
-func (t *GlobTool) Name() string            { return "Glob" }
+func (t *GlobTool) Name() string { return "Glob" }
 
-func (t *GlobTool) Description() string     { return GlobDescription }
+func (t *GlobTool) Description() string { return GlobDescription }
 
-func (t *GlobTool) Category() ToolCategory  { return CategoryRead }
+func (t *GlobTool) Category() ToolCategory { return CategoryRead }
 
 func (t *GlobTool) Schema() map[string]any {
 	return map[string]any{
@@ -32,12 +32,13 @@ func (t *GlobTool) Schema() map[string]any {
 	}
 }
 
-func (t *GlobTool) Execute(_ context.Context, args map[string]any) ToolResult {
+func (t *GlobTool) Execute(ctx context.Context, args map[string]any) ToolResult {
 	pattern, _ := args["pattern"].(string)
 	basePath, _ := args["path"].(string)
 	if basePath == "" {
 		basePath = "."
 	}
+	basePath = ResolvePath(ctx, basePath)
 	if pattern == "" {
 		return ToolResult{Output: "Error: pattern is required", IsError: true}
 	}

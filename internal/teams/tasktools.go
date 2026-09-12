@@ -228,7 +228,7 @@ func (t *TaskListTool) Execute(_ context.Context, args map[string]any) tools.Too
 
 type TaskUpdateTool struct {
 	TeamMgr  *TeamManager
-	TeamName string
+	TeamName string // 这里 TeamName 放在工具结构体内部，调用工具的之后就知道是哪个成员调用的
 }
 
 func (t *TaskUpdateTool) Name() string                 { return "TaskUpdate" }

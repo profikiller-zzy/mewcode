@@ -43,10 +43,8 @@ type Agent struct {
 	Checker         *permissions.Checker // 权限检查器
 	Hooks           *hooks.Engine
 	// SessionID 标识本 Agent 追加写入的磁盘会话日志。设置后，Layer 2 压缩会往
-	// 该会话里写一条 compact_boundary 记录，之后恢复会话就能直接
-	// 重建压缩后的状态，而不必重放
-	// 压缩前的完整记录。留空则不持久化边界（测试、
-	// 一次性调用方）。
+	// 该会话里写一条 compact_boundary 记录，之后恢复会话就能直接重建压缩后的状态，而不必重放
+	// 压缩前的完整记录。留空则不持久化边界（测试、一次性调用方）。
 	SessionID      string
 	NotificationFn func() []string
 	// ToolNameFilter 非 nil 时，Name 判定返回 false 的工具不会出现在发给 LLM 的
@@ -60,8 +58,7 @@ type Agent struct {
 	// SkillDeltaFn 返回本轮新出现的 Skill 清单（已通知过的不再返回）。
 	// 会话中途装了新 Skill 时只补这几条，不重发整份清单，也不动系统提示词。
 	SkillDeltaFn func() string
-	// MemoryRecallCh 非阻塞 memory recall：prefetch 与主 LLM 调用并行，
-	// 工具执行后从 channel 读取并注入
+	// MemoryRecallCh 非阻塞 memory recall：prefetch 与主 LLM 调用并行，工具执行后从 channel 读取并注入
 	MemoryRecallCh <-chan RecallResult
 	ToolNameFilter func(name string) bool
 	// CoordinatorActiveFn 非 nil 时，用来报告 Coordinator 模式当前是否生效。
@@ -76,8 +73,7 @@ type Agent struct {
 	FileHistory     *filehistory.History
 	compactTracking compact.AutoCompactTrackingState
 	// RecoveryState 保存着重建工作上下文所需的快照，供 Layer 2 把对话
-	// 压成摘要之后使用：最近读过的文件和调用过的 skill。
-	// 这个结构体是并发安全的，
+	// 压成摘要之后使用：最近读过的文件和调用过的 skill。这个结构体是并发安全的，
 	// 所以流式执行器可以从多个 goroutine 往里写。
 	RecoveryState *compact.RecoveryState
 	// Trace 记录完整的 run 级轨迹。它是可选的；对于交互式会话，
@@ -755,8 +751,11 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 		}
 	}
 
+	toolCtx := tools.WithWorkDir(ctx, a.WorkDir)
+	toolArgs := tools.ResolveToolArguments(toolCtx, tc.toolName, tc.arguments)
+
 	if a.Checker != nil {
-		decision := a.Checker.Check(tool, tc.arguments)
+		decision := a.Checker.Check(tool, toolArgs)
 		if decision.Effect == permissions.Deny {
 			return toolExecResult{
 				toolID:   tc.toolID,
@@ -768,7 +767,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 		}
 		if decision.Effect == permissions.Ask {
 			respCh := make(chan PermissionResponse, 1)
-			desc := permissions.DescribeToolAction(tc.toolName, tc.arguments)
+			desc := permissions.DescribeToolAction(tc.toolName, toolArgs)
 			eventCh <- PermissionRequestEvent{
 				ToolName:   tc.toolName,
 				Desc:       desc,
@@ -785,7 +784,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 				}
 			}
 			if resp == PermAllowAlways {
-				content := permissions.ExtractContent(tc.toolName, tc.arguments)
+				content := permissions.ExtractContent(tc.toolName, toolArgs)
 				pattern := content + "*"
 				if len(content) > 60 {
 					pattern = content[:60] + "*"
@@ -804,8 +803,8 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 		hookCtx := hooks.HookContext{
 			EventName: hooks.EventPreToolUse,
 			ToolName:  tc.toolName,
-			ToolArgs:  tc.arguments,
-			FilePath:  extractFilePath(tc.arguments),
+			ToolArgs:  toolArgs,
+			FilePath:  extractFilePath(toolArgs),
 		}
 		if rejected, msg := a.Hooks.RunPreToolHooks(hookCtx); rejected {
 			return toolExecResult{
@@ -818,12 +817,12 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 		}
 	}
 
-	result := tool.Execute(ctx, tc.arguments)
+	result := tool.Execute(toolCtx, toolArgs)
 
 	a.RecordRecentTool(tc.toolName)
 
 	if !result.IsError && tc.toolName == "ReadFile" {
-		if p, _ := tc.arguments["file_path"].(string); p != "" {
+		if p, _ := toolArgs["file_path"].(string); p != "" {
 			if data, err := os.ReadFile(p); err == nil {
 				a.RecoveryState.RecordFileRead(p, string(data))
 			}
@@ -834,8 +833,8 @@ func (a *Agent) executeSingleTool(ctx context.Context, eventCh chan AgentEvent, 
 		a.Hooks.RunHooks(hooks.HookContext{
 			EventName: hooks.EventPostToolUse,
 			ToolName:  tc.toolName,
-			ToolArgs:  tc.arguments,
-			FilePath:  extractFilePath(tc.arguments),
+			ToolArgs:  toolArgs,
+			FilePath:  extractFilePath(toolArgs),
 			Message:   result.Output,
 		})
 	}

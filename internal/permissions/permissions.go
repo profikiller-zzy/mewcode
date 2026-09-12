@@ -140,11 +140,16 @@ func (s *PathSandbox) Check(path string) (bool, string) {
 	}
 
 	for _, root := range s.allowedRoots {
-		if strings.HasPrefix(abs, root) {
+		if pathWithin(root, abs) {
 			return true, ""
 		}
 	}
 	return false, fmt.Sprintf("path %s outside sandbox", path)
+}
+
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // CheckDenyWrite 单独检查受保护路径。这类路径存放权限配置与 Skill 定义，
@@ -170,6 +175,39 @@ func (s *PathSandbox) GetDenyWrite() []string {
 // GetAllowedRoots 返回允许写入的路径列表，供沙箱 Config 构建使用
 func (s *PathSandbox) GetAllowedRoots() []string {
 	return s.allowedRoots
+}
+
+// ForWorktree returns a sandbox rooted at workDir. The parent project root is
+// deliberately removed from the allowed roots, while unrelated shared roots
+// (for example a user-level memory directory) remain available.
+func (s *PathSandbox) ForWorktree(workDir string) *PathSandbox {
+	if s == nil || workDir == "" {
+		return s
+	}
+	root, _ := filepath.Abs(workDir)
+	oldRoot := ""
+	if len(s.allowedRoots) > 0 {
+		oldRoot = s.allowedRoots[0]
+	}
+	var extras []string
+	for i, allowed := range s.allowedRoots {
+		if i == 0 || allowed == "" || allowed == os.TempDir() {
+			continue
+		}
+		if oldRoot != "" && (allowed == oldRoot || strings.HasPrefix(allowed, oldRoot+string(filepath.Separator))) {
+			continue
+		}
+		extras = append(extras, allowed)
+	}
+	result := NewPathSandbox(root, extras...)
+	// Preserve explicit user/system deny paths outside the parent project.
+	for _, deny := range s.denyWrite {
+		if oldRoot != "" && (deny == oldRoot || strings.HasPrefix(deny, oldRoot+string(filepath.Separator))) {
+			continue
+		}
+		result.denyWrite = append(result.denyWrite, deny)
+	}
+	return result
 }
 
 // 第 3 层：规则引擎
@@ -238,6 +276,20 @@ type RuleEngine struct {
 	// 后台记忆 Agent 与主 Agent 可能共用同一个引擎，缓存读写要加锁
 	mu    sync.Mutex
 	cache map[string]cachedRules
+}
+
+// ForWorktree clones the rule engine for an agent worktree. User and project
+// policy remain shared (they describe the same repository), while the mutable
+// local policy file and parse cache are private to the child worktree.
+func (e *RuleEngine) ForWorktree(workDir string) *RuleEngine {
+	if e == nil || workDir == "" {
+		return e
+	}
+	return &RuleEngine{
+		UserPath:    e.UserPath,
+		ProjectPath: e.ProjectPath,
+		LocalPath:   filepath.Join(workDir, ".mewcode", "permissions.local.yaml"),
+	}
 }
 
 // NewRuleEngine 按约定路径构造规则引擎：用户级放在 home 目录下，
@@ -451,6 +503,34 @@ func NewChecker(sandbox *PathSandbox, ruleEngine *RuleEngine, mode PermissionMod
 	}
 }
 
+// ForWorktree clones the checker and rebases its path sandbox, local rule file,
+// and plan file to the agent's isolated worktree. User/project policy remains
+// shared, while mutable local decisions stay private to the child.
+func (c *Checker) ForWorktree(workDir string) *Checker {
+	if c == nil || workDir == "" {
+		return c
+	}
+	clone := *c
+	if c.Sandbox != nil {
+		oldRoot := ""
+		if roots := c.Sandbox.GetAllowedRoots(); len(roots) > 0 {
+			oldRoot = roots[0]
+		}
+		clone.Sandbox = c.Sandbox.ForWorktree(workDir)
+		if clone.PlanFilePath != "" && oldRoot != "" {
+			if absPlan, err := filepath.Abs(clone.PlanFilePath); err == nil {
+				if rel, err := filepath.Rel(oldRoot, absPlan); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					clone.PlanFilePath = filepath.Join(workDir, rel)
+				}
+			}
+		}
+	}
+	if c.RuleEngine != nil {
+		clone.RuleEngine = c.RuleEngine.ForWorktree(workDir)
+	}
+	return &clone
+}
+
 func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 	content := ExtractContent(tool.Name(), args)
 	cat := tool.Category()
@@ -501,13 +581,21 @@ func (c *Checker) Check(tool tools.Tool, args map[string]any) Decision {
 
 	// 第 3 层：路径沙箱（文件类工具）
 	if (cat == tools.CategoryRead || cat == tools.CategoryWrite) && content != "" {
+		pathTarget := content
+		// Glob/Grep rules match their search pattern, but the path sandbox must
+		// independently validate the directory being traversed.
+		if tool.Name() == "Glob" || tool.Name() == "Grep" {
+			if p, _ := args["path"].(string); p != "" {
+				pathTarget = p
+			}
+		}
 		// 受保护路径优先判定：写入权限配置或 Skill 定义一律拒绝，bypass 模式同样拦截
 		if cat == tools.CategoryWrite {
-			if ok, reason := c.Sandbox.CheckDenyWrite(content); !ok {
+			if ok, reason := c.Sandbox.CheckDenyWrite(pathTarget); !ok {
 				return Decision{Effect: Deny, Reason: reason}
 			}
 		}
-		ok, reason := c.Sandbox.Check(content)
+		ok, reason := c.Sandbox.Check(pathTarget)
 		if !ok {
 			if c.Mode == ModeBypass {
 				// bypass 模式跳过沙箱确认，直接放行

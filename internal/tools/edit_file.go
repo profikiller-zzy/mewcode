@@ -14,11 +14,11 @@ type EditFileTool struct {
 	FileStateCache *FileStateCache
 }
 
-func (t *EditFileTool) Name() string            { return "EditFile" }
+func (t *EditFileTool) Name() string { return "EditFile" }
 
-func (t *EditFileTool) Description() string     { return EditFileDescription }
+func (t *EditFileTool) Description() string { return EditFileDescription }
 
-func (t *EditFileTool) Category() ToolCategory  { return CategoryWrite }
+func (t *EditFileTool) Category() ToolCategory { return CategoryWrite }
 
 func (t *EditFileTool) Schema() map[string]any {
 	return map[string]any{
@@ -36,8 +36,9 @@ func (t *EditFileTool) Schema() map[string]any {
 	}
 }
 
-func (t *EditFileTool) Execute(_ context.Context, args map[string]any) ToolResult {
+func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) ToolResult {
 	filePath, _ := args["file_path"].(string)
+	filePath = ResolvePath(ctx, filePath)
 	oldStr, _ := args["old_string"].(string)
 	newStr, _ := args["new_string"].(string)
 

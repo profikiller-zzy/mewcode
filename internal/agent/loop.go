@@ -313,6 +313,7 @@ func (l *AgentLoop) runSession(state *loopSession) {
 				Conversation: working, Trace: l.trace, Context: state.context,
 			})
 			var runErr error
+			// 每次独立的user请求都封装为一次run，run.Start(runCtx)负责处理这个独立的用户请求
 			for event := range run.Start(runCtx) {
 				switch e := event.(type) {
 				case ErrorEvent:

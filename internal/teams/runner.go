@@ -43,8 +43,7 @@ func CreateIdleNotification(memberName, reason string) FileMailMessage {
 // 并通过 eventOut 转发事件，channel 关闭即表示本轮结束。3. sendIdleNotification
 // —— 往 Lead 的收件箱里丢一个空闲标记，好让 Lead 派发下一个任务。
 //
-// 这条初始 prompt 用来启动第一轮迭代；之后每轮的 prompt
-// 都从收件箱里取。
+// 这条初始 prompt 用来启动第一轮迭代；之后每轮的 prompt 都从收件箱里取。
 func RunInProcessTeammate(
 	ctx context.Context,
 	team *Team,

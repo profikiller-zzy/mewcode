@@ -1,6 +1,6 @@
 package teams
 
-// CoordinatorMode 把 Lead 的工具集收窄到纯调度。
+// CoordinatorAllowedTools CoordinatorMode 把 Lead 的工具集收窄到纯调度。
 //
 // 划线的标准不是「读」和「写」，而是这个工具会不会把大段内容灌进 Lead 的上下文。
 // Lead 的上下文要装任务分解、队员状态和消息记录，一旦它能直接读文件、跑命令，

@@ -85,7 +85,8 @@ type AgentTool struct {
 	ContextWindow   int
 	MaxOutputTokens int
 
-	// ParentChecker 是父 Agent 的权限检查器。Sandbox 和 RuleEngine 复用父级的；
+	// ParentChecker 是父 Agent 的权限检查器。RuleEngine 复用父级；worktree 模式
+	// 会把 Sandbox 根目录切换到子 Agent 的 worktree，普通模式直接复用。
 	// 只有当 sub-agent 定义 / 调用里指定了不同的 permissionMode 时才覆盖 Mode。
 	// 可选 —— 为 nil 时子 Agent 拿不到检查器（早期引导 / 测试场景）。
 	ParentChecker *permissions.Checker
@@ -200,7 +201,7 @@ func (t *AgentTool) Schema() map[string]any {
 				"isolation": map[string]any{
 					"type":        "string",
 					"enum":        []string{"worktree"},
-					"description": "For a role agent or teammate, create a dedicated git worktree so edits do not collide with the lead or peers. It is ignored by the current fork path.",
+					"description": "For a role agent, fork, or teammate, create a dedicated git worktree so edits do not collide with the lead or peers.",
 				},
 				"plan_mode_required": map[string]any{
 					"type":        "boolean",
@@ -259,23 +260,21 @@ func (t *AgentTool) Execute(ctx context.Context, args map[string]any) tools.Tool
 		}
 	}
 
-	// 团队成员路径：显式给了 team_name，这次派生就变成该团队 backend 下
-	// 长期运行的 teammate。teammate 一启动 Lead 就拿回控制权，后续协调走
-	// SendMessage / mailbox 通知。
+	// 团队成员路径：显式给了 team_name，这次派生就变成该团队 backend 下长期运行的 teammate。teammate 一启动 Lead 就拿回控制权，
+	// 后续协调走 SendMessage / mailbox 通知。
 	if teamName != "" && t.TeamMgr != nil {
 		return t.runAsTeammate(ctx, teamName, agentName, description, prompt, modelOverride, subagentType, isolation, planModeRequired)
 	}
 
-	// 省略 subagent_type 时的走向由配置决定：fork 开着就继承父对话，关着就当成
-	// 没指定类型，回退到通用 agent。这里不报错，模型只是没填一个可选参数，
-	// 为此中断一次调用不值得，回退到通用 agent 一样能把活干了。
+	// 省略 subagent_type 时的走向由配置决定：fork 开着就继承父对话，关着就当成没指定类型，回退到通用 agent。这里不报错，
+	// 模型只是没填一个可选参数，为此中断一次调用不值得，回退到通用 agent 一样能把活干了。
 	if subagentType == "" && t.ForkDisabled {
 		subagentType = GeneralPurposeAgentType
 	}
 
 	// 没有指定 subagent_type则走fork subagent
 	if subagentType == "" {
-		return t.runFork(ctx, description, prompt, modelOverride)
+		return t.runFork(ctx, description, prompt, modelOverride, isolation)
 	}
 
 	// 定义路径：从 loader 或内置表里解析 spec。
@@ -336,24 +335,13 @@ func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description,
 		subAgent.MaxIterations = 200
 	}
 
-	// Worktree 隔离：给 sub-agent 创建一个独立的 worktree。
+	// Worktree 隔离：给 sub-agent 创建一个独立的 worktree，并把权限根目录
+	// 与工具调用的相对路径一并切换过去。
 	var wtResult *worktree.AgentWorktreeResult
-	if isolation == "worktree" {
-		slug := generateAgentSlug(description)
-		var err error
-		wtResult, err = worktree.CreateAgentWorktree(ctx, slug)
-		if err != nil {
-			return tools.ToolResult{
-				Output:  fmt.Sprintf("Error creating agent worktree: %s", err),
-				IsError: true,
-			}
-		}
-		subAgent.WorkDir = wtResult.WorktreePath
-
-		// 把 worktree 提示注入 prompt。
-		parentCwd, _ := os.Getwd()
-		notice := worktree.BuildWorktreeNotice(parentCwd, wtResult.WorktreePath)
-		prompt = notice + "\n\n" + prompt
+	var err error
+	prompt, wtResult, err = t.prepareAgentWorktree(ctx, subAgent, prompt, isolation, description)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Error creating agent worktree: %s", err), IsError: true}
 	}
 
 	conv := conversation.NewManager()
@@ -494,7 +482,11 @@ func newSubAgentID() string {
 	return "sub-" + hex.EncodeToString(b)
 }
 
-func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverride string) tools.ToolResult {
+func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverride string, isolationArg ...string) tools.ToolResult {
+	isolation := ""
+	if len(isolationArg) > 0 {
+		isolation = isolationArg[0]
+	}
 	if t.Conversation == nil {
 		return tools.ToolResult{Output: "Error: fork requires parent conversation context", IsError: true}
 	}
@@ -519,9 +511,6 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 		}
 	}
 
-	// 构造 fork 对话：复制父消息 + 补齐未完成的 tool_use + 追加任务。
-	forkedConv := buildForkedConversation(t.Conversation, prompt)
-
 	client := t.selectClient("", modelOverride)
 	// fork 原样继承父 Agent 的工具池，这样发出去的请求前缀和父 Agent 逐字节一致，
 	// prompt 缓存才命中得上。其中的 Agent 工具被换成一份 QuerySource=ForkQuerySource
@@ -532,6 +521,16 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 	subAgent.Checker = t.ParentChecker // fork 原样继承父 Agent 的权限状态
 	t.applyProviderLimits(subAgent)
 	subAgent.MaxIterations = 200
+
+	var wtResult *worktree.AgentWorktreeResult
+	var err error
+	prompt, wtResult, err = t.prepareAgentWorktree(ctx, subAgent, prompt, isolation, description)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Error creating agent worktree: %s", err), IsError: true}
+	}
+
+	// 构造 fork 对话：复制父消息 + 补齐未完成的 tool_use + 追加任务。
+	forkedConv := buildForkedConversation(t.Conversation, prompt)
 
 	// fork 同步运行：主 Agent 阻塞在这条工具调用上直到 fork 结束，结果作为工具
 	// 返回值直接进入主对话。同一轮里连续派出的多个 fork 会被 StreamingExecutor
@@ -544,6 +543,9 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 		if outcome.output != "" {
 			msg += "\n\nPartial output before failure:\n" + outcome.output
 		}
+		if kept := finishWorktree(ctx, wtResult); kept {
+			msg += fmt.Sprintf("\n\nWorktree kept at %s (branch %s) — has uncommitted changes or new commits.", wtResult.WorktreePath, wtResult.WorktreeBranch)
+		}
 		return tools.ToolResult{Output: msg, IsError: true}
 	}
 
@@ -551,9 +553,33 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 	if result == "" {
 		result = "(agent produced no output)"
 	}
+	if kept := finishWorktree(ctx, wtResult); kept {
+		result += fmt.Sprintf("\n\nWorktree kept at %s (branch %s) — has uncommitted changes or new commits.", wtResult.WorktreePath, wtResult.WorktreeBranch)
+	}
 	return tools.ToolResult{
 		Output: fmt.Sprintf("Forked agent \"%s\" completed in %s.\n\n%s", description, outcome.elapsed.Round(time.Millisecond), result),
 	}
+}
+
+// prepareAgentWorktree is the shared lifecycle setup for synchronous role and
+// fork agents. It creates the worktree, rebases the permission checker, sets
+// Agent.WorkDir (consumed by path resolution and compaction), and prepends the
+// path-translation notice to the task prompt.
+func (t *AgentTool) prepareAgentWorktree(ctx context.Context, sub *agent.Agent, prompt, isolation, description string) (string, *worktree.AgentWorktreeResult, error) {
+	if isolation != "worktree" {
+		return prompt, nil, nil
+	}
+	wtResult, err := worktree.CreateAgentWorktree(ctx, generateAgentSlug(description))
+	if err != nil {
+		return prompt, nil, err
+	}
+	sub.WorkDir = wtResult.WorktreePath
+	if sub.Checker != nil {
+		sub.Checker = sub.Checker.ForWorktree(wtResult.WorktreePath)
+	}
+	parentCwd, _ := os.Getwd()
+	notice := worktree.BuildWorktreeNotice(parentCwd, wtResult.WorktreePath)
+	return notice + "\n\n" + prompt, wtResult, nil
 }
 
 // emitProgress 发送一个 SubAgentProgress 事件，且绝不阻塞调用方。如果消费方
@@ -575,8 +601,8 @@ func emitProgress(ch chan<- SubAgentProgress, ctx context.Context, p SubAgentPro
 
 // deriveSubAgentChecker 把 sub-agent 的 permissionMode 透传给派生出来的 agent：
 // `mode` 覆盖 agent 定义里的 permissionMode，再喂给 sub-agent 的
-// ToolPermissionContext。Sandbox 和 RuleEngine 是共用的 —— 只换 Mode，
-// 这样 sub-agent 的工具调用会命中另一套判定矩阵，而权限状态不会分叉。
+// ToolPermissionContext。RuleEngine 共用、Sandbox 在 worktree 模式下 rebased，
+// 这样策略一致而文件根目录不串线。
 //
 // 没有要求覆盖时原样返回父级 checker。
 func deriveSubAgentChecker(parent *permissions.Checker, modeOverride string) *permissions.Checker {
@@ -586,7 +612,10 @@ func deriveSubAgentChecker(parent *permissions.Checker, modeOverride string) *pe
 	if modeOverride == "" || permissions.PermissionMode(modeOverride) == parent.Mode {
 		return parent
 	}
-	return permissions.NewChecker(parent.Sandbox, parent.RuleEngine, permissions.PermissionMode(modeOverride))
+	derived := permissions.NewChecker(parent.Sandbox, parent.RuleEngine, permissions.PermissionMode(modeOverride))
+	derived.SandboxEnabled = parent.SandboxEnabled
+	derived.PlanFilePath = parent.PlanFilePath
+	return derived
 }
 
 // cloneRegistryForFork 返回的 registry 原样复制父级，唯一区别是把其中的
@@ -657,7 +686,7 @@ func buildForkedConversation(parent *conversation.Manager, task string) *convers
 }
 
 // runAsTeammate 在一个已有的 Team 上登记一个长期运行的团队成员。和
-// runSync 不同，这条路径从不让 Lead 阻塞等成员的输出：Lead 总是
+// runSync 和 runFork 不同，这条路径从不让 Lead 阻塞等成员的输出：Lead 总是
 // 立刻返回，之后通过 SendMessage 和团队 mailbox 里的 idle 通知来协调。
 // backend（in-process / tmux / iTerm）由 teams.SpawnTeammate 根据 Team.Mode 选择。
 //
@@ -700,8 +729,7 @@ func (t *AgentTool) runAsTeammate(
 
 	teammateDisallowed := append(append([]string{}, spec.DisallowedTools...), TeammateDisallowedTools...)
 	subRegistry := FilterToolsForAgent(t.Registry, spec.Tools, teammateDisallowed, false)
-	// 队友协作工具：以队友自己的名字发消息，并注入团队共享任务板工具
-	// （覆盖继承来的个人版同名工具，让队友之间共享同一份任务列表）。
+	// 队友协作工具：以队友自己的名字发消息，并注入团队共享任务板工具（覆盖继承来的个人版同名工具，让队友之间共享同一份任务列表）。
 	subRegistry.Register(&teams.SendMessageTool{TeamMgr: t.TeamMgr, SenderName: memberName})
 	subRegistry.Register(&teams.TaskCreateTool{TeamMgr: t.TeamMgr, TeamName: teamName, AgentName: memberName})
 	subRegistry.Register(&teams.TaskGetTool{TeamMgr: t.TeamMgr, TeamName: teamName})
@@ -716,6 +744,7 @@ func (t *AgentTool) runAsTeammate(
 	addendum := teams.BuildTeammateAddendum(teamName, memberName, otherMembers)
 
 	var workdir string
+	var teammateWorktree *worktree.AgentWorktreeResult
 	if isolation == "worktree" {
 		slug := generateAgentSlug(description)
 		wtResult, err := worktree.CreateAgentWorktree(ctx, slug)
@@ -725,6 +754,7 @@ func (t *AgentTool) runAsTeammate(
 				IsError: true,
 			}
 		}
+		teammateWorktree = wtResult
 		workdir = wtResult.WorktreePath
 		parentCwd, _ := os.Getwd()
 		notice := worktree.BuildWorktreeNotice(parentCwd, wtResult.WorktreePath)
@@ -739,6 +769,11 @@ func (t *AgentTool) runAsTeammate(
 	if planModeRequired && t.ParentChecker != nil {
 		teammateChecker = permissions.NewChecker(
 			t.ParentChecker.Sandbox, t.ParentChecker.RuleEngine, permissions.ModePlan)
+		teammateChecker.SandboxEnabled = t.ParentChecker.SandboxEnabled
+		teammateChecker.PlanFilePath = t.ParentChecker.PlanFilePath
+	}
+	if workdir != "" && teammateChecker != nil {
+		teammateChecker = teammateChecker.ForWorktree(workdir)
 	}
 
 	result, err := teams.SpawnTeammate(ctx, teams.TeammateSpawnConfig{
@@ -753,6 +788,9 @@ func (t *AgentTool) runAsTeammate(
 		Workdir:    workdir,
 	})
 	if err != nil {
+		if teammateWorktree != nil {
+			_ = finishWorktree(ctx, teammateWorktree)
+		}
 		return tools.ToolResult{
 			Output:  fmt.Sprintf("Error spawning teammate: %v", err),
 			IsError: true,

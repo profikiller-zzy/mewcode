@@ -11,10 +11,10 @@ type ReadFileTool struct {
 	FileStateCache *FileStateCache
 }
 
-func (t *ReadFileTool) Name() string            { return "ReadFile" }
-func (t *ReadFileTool) Description() string     { return ReadFileDescription }
+func (t *ReadFileTool) Name() string        { return "ReadFile" }
+func (t *ReadFileTool) Description() string { return ReadFileDescription }
 
-func (t *ReadFileTool) Category() ToolCategory  { return CategoryRead }
+func (t *ReadFileTool) Category() ToolCategory { return CategoryRead }
 
 func (t *ReadFileTool) Schema() map[string]any {
 	return map[string]any{
@@ -32,8 +32,9 @@ func (t *ReadFileTool) Schema() map[string]any {
 	}
 }
 
-func (t *ReadFileTool) Execute(_ context.Context, args map[string]any) ToolResult {
+func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) ToolResult {
 	filePath, _ := args["file_path"].(string)
+	filePath = ResolvePath(ctx, filePath)
 	if filePath == "" {
 		return ToolResult{Output: "Error: file_path is required", IsError: true}
 	}
