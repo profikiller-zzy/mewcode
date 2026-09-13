@@ -11,7 +11,7 @@ MewCode 是一个使用 Go 编写的终端 AI 编程助手（coding agent）。�
 - 远程服务：使用 --remote 启动 WebSocket/Web 服务。
 - 多模型接入：支持 Anthropic、OpenAI 和 OpenAI 兼容协议。
 - 工具调用：内置文件读写、编辑、搜索、Shell、Diff、权限控制等工具，也可以加载 MCP 工具。
-- 子 Agent 与团队：支持一次性子 Agent，以及通过 tmux/iTerm 或进程内运行的长期协作团队。
+- 子 Agent 与团队：支持一次性子 Agent，以及在当前进程不同 goroutine 中运行的长期协作团队。
 - 项目记忆与技能：支持项目级/用户级记忆、技能目录、项目指令文件和自动上下文压缩。
 - 工作树隔离：可为任务创建独立 Git worktree。
 
@@ -129,16 +129,6 @@ mewcode --remote 127.0.0.1:9000
 
 默认监听 :18888，使用与普通模式相同的配置和 Provider。
 
-### 团队队员模式
-
-团队由 Lead Agent 自动创建和管理。队员进程的格式为：
-
-~~~
-mewcode --teammate --team-name <team-name> --agent-name <agent-name>
-~~~
-
-通常不需要手动执行，这是 tmux/iTerm 后端启动队员时使用的内部入口。
-
 ## 配置字段
 
 | 字段 | 作用 |
@@ -188,7 +178,6 @@ mewcode/
 ├── cmd/mewcode/              # 可执行程序入口和命令行模式
 │   ├── main.go               # 解析模式、加载配置、启动 TUI/远程服务
 │   ├── print.go              # -p/--print 非交互式执行和输出格式
-│   └── teammate.go           # --teammate 队员进程入口
 ├── internal/                 # 项目业务代码（不对外暴露 Go 包）
 │   ├── agent/                # Agent 主循环、事件和流式工具执行
 │   ├── agents/               # 子 Agent 定义、加载器、任务管理
@@ -288,4 +277,3 @@ go test ./internal/agent
 ~~~
 
 部分端到端测试需要 MEWCODE_TEST_API_KEY、MEWCODE_TEST_BASE_URL 和 MEWCODE_TEST_MODEL；未配置时会自动跳过。
-

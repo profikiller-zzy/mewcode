@@ -685,7 +685,8 @@ func buildForkedConversation(parent *conversation.Manager, task string) *convers
 // runAsTeammate 在一个已有的 Team 上登记一个长期运行的团队成员。和
 // runSync 和 runFork 不同，这条路径从不让 Lead 阻塞等成员的输出：Lead 总是
 // 立刻返回，之后通过 SendMessage 和团队 mailbox 里的 idle 通知来协调。
-// backend（in-process / tmux / iTerm）由 teams.SpawnTeammate 根据 Team.Mode 选择。
+// teammate 统一由 teams.SpawnTeammate 在当前进程内启动；不同成员使用独立 goroutine、
+// Agent、Conversation 和 worktree。
 //
 // 当 isolation == "worktree" 且配了 WorktreeMgr 时，teammate 会拿到一个专属的
 // git worktree，这样它改文件就不会和别的成员撞车。
@@ -801,9 +802,6 @@ func (t *AgentTool) runAsTeammate(
 	}
 
 	backendHint := string(result.Mode)
-	if result.PaneID != "" {
-		backendHint += " pane=" + result.PaneID
-	}
 	if workdir != "" {
 		backendHint += " worktree=" + workdir
 	}

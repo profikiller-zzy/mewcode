@@ -25,14 +25,6 @@ func main() {
 		}
 	}()
 
-	if args, ok := parseTeammateFlags(os.Args[1:]); ok {
-		if err := runTeammate(args); err != nil {
-			fmt.Fprintf(os.Stderr, "teammate: %s\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	// 解析 -p/--print 和 --remote 模式
 	remoteAddr := ""
 	var filteredArgs []string
@@ -97,4 +89,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

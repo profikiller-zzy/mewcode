@@ -101,8 +101,9 @@ func (t *Team) snapshot() *TeamFile {
 			Model:        m.Model,
 			JoinedAt:     m.JoinedAt,
 			WorktreePath: m.WorktreePath,
-			BackendType:  string(t.Mode),
-			IsActive:     &active,
+			// 保留字段以兼容旧 config.json，但新写入统一标记为唯一后端。
+			BackendType: string(ModeInProcess),
+			IsActive:    &active,
 		})
 	}
 	return tf

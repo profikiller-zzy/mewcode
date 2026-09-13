@@ -18,7 +18,6 @@ type TeamMode string
 
 const (
 	ModeInProcess TeamMode = "in-process"
-	ModeTmux      TeamMode = "tmux"
 )
 
 // teamsBaseDir 是所有团队目录的根。放在用户主目录而不是项目目录下，
@@ -41,10 +40,7 @@ type Member struct {
 	Conv   *conversation.Manager
 	Active bool
 	// Lead 停止它的入口
-	Cancel context.CancelFunc
-	// PaneID 是 tmux/iTerm spawn 时分配的后端相关句柄
-	// （例如 window 或 tab 名）。in-process 成员为空。
-	PaneID   string
+	Cancel   context.CancelFunc
 	Progress *TeammateProgress
 
 	// 以下几个是要落盘的元信息，运行时不参与调度，只在写 config.json
@@ -162,17 +158,7 @@ func (t *Team) StopMember(name string) {
 	if !ok {
 		return
 	}
-	// 外部后端（tmux/iTerm）持有真实的 OS 窗格，必须先把它拆掉，
-	// 再清掉本地句柄。in-process 成员
-	// 只需要把 goroutine 取消掉。
-	if member.PaneID != "" {
-		switch t.Mode {
-		case ModeTmux:
-			stopTmuxTeammate(member.PaneID)
-		case ModeITerm:
-			stopITermTeammate(member.PaneID)
-		}
-	}
+	// teammate 始终是当前进程里的 goroutine，只需要取消它的 context。
 	if member.Cancel != nil {
 		member.Cancel()
 	}
@@ -250,10 +236,8 @@ func (tm *TeamManager) GetTaskStore(teamName string) *SharedTaskStore {
 	return store
 }
 
-// CreateTeamWith 注册一个外部构造好的 Team。tmux/iTerm 拉起来的 worker
-// 进程会在本地建一个 Team（指向和 Lead
-// 相同的 mailbox 目录），然后用这个方法
-// 把它暴露给同进程里的 SendMessage。
+// CreateTeamWith 注册一个外部构造好的 Team。保留这个入口用于恢复磁盘上的
+// Team 元信息；实际 teammate 始终由当前进程内的 SpawnTeammate 启动。
 func (tm *TeamManager) CreateTeamWith(team *Team) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -278,9 +262,9 @@ func (tm *TeamManager) GetTeam(name string) *Team {
 	team.Description = tf.Description
 	team.CreatedAt = tf.CreatedAt
 	for _, m := range tf.Members {
-		if m.BackendType != "" {
-			team.Mode = TeamMode(m.BackendType)
-		}
+		// 旧版本 config.json 可能保存过 tmux/iTerm；当前实现只支持
+		// in-process，故忽略历史 backendType。
+		team.Mode = ModeInProcess
 		active := false
 		if m.IsActive != nil {
 			active = *m.IsActive

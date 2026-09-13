@@ -127,10 +127,7 @@ func (t *SendMessageTool) Execute(ctx context.Context, args map[string]any) tool
 	}
 
 	// 找一个注册过、名字匹配的 teammate，找不到就回退到基于文件的信箱。
-	// 在 tmux/iTerm 模式下每个 teammate 跑在独立进程里，
-	// 在 Members 中只认得自己，所以内存查找会漏掉同伴。
-	// 写文件信箱总是可行的，
-	// 因为所有进程共享磁盘上同一个 inbox 目录。
+	// 文件信箱仍然保留，作为不同 Agent goroutine 之间可靠的持久化通信边界。
 	for _, teamName := range t.TeamMgr.ListTeams() {
 		team := t.TeamMgr.GetTeam(teamName)
 		if team == nil {
@@ -243,7 +240,7 @@ func (t *TeamCreateTool) Execute(ctx context.Context, args map[string]any) tools
 		name = fmt.Sprintf("%s-%d", baseName, i)
 	}
 
-	mode := detectBackend()
+	mode := DetectBackend()
 	desc, _ := args["description"].(string)
 	team := t.TeamMgr.CreateTeamFull(name, mode, LeadName, desc)
 	return tools.ToolResult{

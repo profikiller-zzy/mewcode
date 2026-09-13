@@ -39,7 +39,7 @@ func TestTeamFilePathIsSanitized(t *testing.T) {
 	useTempHome(t)
 
 	tm := NewTeamManager()
-	tm.CreateTeamFull("Refactor Auth!", ModeTmux, "lead", "")
+	tm.CreateTeamFull("Refactor Auth!", ModeInProcess, "lead", "")
 
 	want := filepath.Join(teamsBaseDir(), "refactor-auth-", "config.json")
 	if _, err := os.Stat(want); err != nil {

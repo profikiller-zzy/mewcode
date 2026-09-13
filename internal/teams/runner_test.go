@@ -337,27 +337,6 @@ func TestDrainLeadMailboxNilSafe(t *testing.T) {
 	}
 }
 
-func TestBuildTeammateCLIFormat(t *testing.T) {
-	cmd, err := BuildTeammateCLI("my team", "alice/dev", "/tmp/work dir")
-	if err != nil {
-		t.Fatalf("BuildTeammateCLI: %v", err)
-	}
-	// 空格和斜杠必须加引号，--teammate 必须存在，
-	// 并且 cd 前缀要用传入的 workdir。
-	if !strings.Contains(cmd, "--teammate") {
-		t.Errorf("command missing --teammate flag: %s", cmd)
-	}
-	if !strings.Contains(cmd, "--team-name 'my team'") {
-		t.Errorf("team-name not quoted with spaces: %s", cmd)
-	}
-	if !strings.Contains(cmd, "--agent-name alice/dev") {
-		t.Errorf("agent-name missing: %s", cmd)
-	}
-	if !strings.HasPrefix(cmd, "cd '/tmp/work dir'") {
-		t.Errorf("missing cd prefix: %s", cmd)
-	}
-}
-
 func TestSpawnTeammateValidation(t *testing.T) {
 	ctx := context.Background()
 
@@ -372,39 +351,4 @@ func TestSpawnTeammateValidation(t *testing.T) {
 		t.Error("expected error when MemberName is empty")
 	}
 
-	// 未知的 mode
-	bad := NewTeam("t", "bogus")
-	if _, err := SpawnTeammate(ctx, TeammateSpawnConfig{Team: bad, MemberName: "x"}); err == nil {
-		t.Error("expected error for unknown team mode")
-	}
-}
-
-func TestRecordExternalMember(t *testing.T) {
-	team := NewTeam("ops", ModeTmux)
-	team.recordExternalMember("alice", "pane-1")
-
-	m, ok := team.Members["alice"]
-	if !ok {
-		t.Fatal("member not recorded")
-	}
-	if m.PaneID != "pane-1" {
-		t.Errorf("PaneID = %q, want pane-1", m.PaneID)
-	}
-	if !m.Active {
-		t.Error("recorded member should be Active=true")
-	}
-}
-
-func TestShellQuote(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"", "''"},
-		{"safe", "safe"},
-		{"hello world", "'hello world'"},
-		{"it's", "'it'\\''s'"},
-	}
-	for _, c := range cases {
-		if got := shellQuote(c.in); got != c.want {
-			t.Errorf("shellQuote(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
 }
