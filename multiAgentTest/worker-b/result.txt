@@ -1,0 +1,3 @@
+agent_name: worker-b
+working_dir: /Users/junyuzhou/GolandProjects/mewcode/.mewcode/worktrees/agent-acc61ffb
+branch: worktree-agent-acc61ffb
