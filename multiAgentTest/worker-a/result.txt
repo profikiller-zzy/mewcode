@@ -1,0 +1,3 @@
+agent_name: worker-a
+working_dir: /Users/junyuzhou/GolandProjects/mewcode/.mewcode/worktrees/agent-a3188aea
+branch: worktree-agent-a3188aea
