@@ -37,8 +37,9 @@ func teamsBaseDir() string {
 type Member struct {
 	Name     string
 	AgentRef *agent.Agent
-	Conv     *conversation.Manager
-	Active   bool
+	// member 拥有自己的上下文管理，是一个独立的 agent
+	Conv   *conversation.Manager
+	Active bool
 	// Lead 停止它的入口
 	Cancel context.CancelFunc
 	// PaneID 是 tmux/iTerm spawn 时分配的后端相关句柄
@@ -62,6 +63,11 @@ type Team struct {
 	Members map[string]*Member
 	MailBox *FileMailBox
 	mu      sync.Mutex
+	// ctx/cancel 的生命周期属于整个 Team，而不是某一次 Lead run。
+	// in-process teammate 使用它运行，只有 StopMember/DeleteTeam/CloseAll
+	// 才会结束队友循环。
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// 落盘用的团队级元信息
 	LeadAgentID string
@@ -71,13 +77,27 @@ type Team struct {
 
 func NewTeam(name string, mode TeamMode) *Team {
 	inboxDir := filepath.Join(teamDir(name), "inboxes")
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Team{
 		Name:      name,
 		Mode:      mode,
 		Members:   make(map[string]*Member),
 		MailBox:   NewFileMailBox(inboxDir),
 		CreatedAt: time.Now().Unix(),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
+}
+
+// workerContext 返回 Team 级别的上下文。它不会随着 Lead 的单次请求结束，
+// 只有显式关闭 Team 才会取消。
+func (t *Team) workerContext() context.Context {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ctx == nil {
+		t.ctx, t.cancel = context.WithCancel(context.Background())
+	}
+	return t.ctx
 }
 
 func (t *Team) AddMember(name string, client llm.Client, registry *tools.Registry, protocol string) *Member {
@@ -289,6 +309,9 @@ func (tm *TeamManager) DeleteTeam(name string) {
 			// 解绑该成员在全局名称注册表里的映射
 			registry.Unregister(memberName)
 		}
+		if team.cancel != nil {
+			team.cancel()
+		}
 		delete(tm.teams, name)
 	}
 	delete(tm.taskStores, name)
@@ -323,6 +346,9 @@ func (tm *TeamManager) CloseAll() {
 	for name, team := range tm.teams {
 		for memberName := range team.Members {
 			team.StopMember(memberName)
+		}
+		if team.cancel != nil {
+			team.cancel()
 		}
 		delete(tm.teams, name)
 	}

@@ -142,6 +142,7 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]any) ToolResult 
 			// profile instead of mutating the shared config, so a subagent can
 			// write only inside its own worktree.
 			sandboxConfig.AllowWrite = []string{workDir, os.TempDir()}
+			sandboxConfig.AllowWrite = append(sandboxConfig.AllowWrite, gitWriteRoots(workDir)...)
 			sandboxConfig.DenyWrite = append(append([]string{}, sandboxConfig.DenyWrite...),
 				filepath.Join(workDir, ".mewcode", "config.yaml"),
 				filepath.Join(workDir, ".mewcode", "permissions.local.json"),
@@ -196,4 +197,44 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]any) ToolResult 
 
 	// is_error 只在超时/中断时为 true，正常非零退出码不标 error
 	return ToolResult{Output: sb.String(), IsError: false}
+}
+
+// gitWriteRoots returns the git metadata directories that Git may update when
+// commands run from a worktree. A linked worktree's .git file points at
+// .git/worktrees/<name>, while refs and config live in the common .git dir.
+// Both locations must be writable for git add/commit/branch operations inside
+// an OS-level sandbox.
+func gitWriteRoots(workDir string) []string {
+	gitEntry := filepath.Join(workDir, ".git")
+	info, err := os.Stat(gitEntry)
+	if err != nil {
+		return nil
+	}
+	if info.IsDir() {
+		return []string{gitEntry}
+	}
+	raw, err := os.ReadFile(gitEntry)
+	if err != nil {
+		return nil
+	}
+	content := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(content, "gitdir:") {
+		return nil
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(content, "gitdir:"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(workDir, gitDir)
+	}
+	gitDir, _ = filepath.Abs(gitDir)
+	roots := []string{filepath.Clean(gitDir)}
+	if commonRaw, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+		commonDir := strings.TrimSpace(string(commonRaw))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitDir, commonDir)
+		}
+		if commonDir, err = filepath.Abs(commonDir); err == nil {
+			roots = append(roots, filepath.Clean(commonDir))
+		}
+	}
+	return roots
 }

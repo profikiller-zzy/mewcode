@@ -30,10 +30,8 @@ func StartInProcessMember(
 	return startInProcessMember(ctx, team, memberName, client, registry, protocol, task, addendum, "", nil)
 }
 
-// StartInProcessMemberWithConfig is the worktree-aware variant used by the
-// Agent tool. Workdir and Checker are installed before the goroutine starts,
-// eliminating a race where the first model turn could run with the lead's
-// directory or permissions.
+// StartInProcessMemberWithConfig 是 Agent 工具使用的、能感知 worktree（工作树）的变体。
+// Workdir 和 Checker 会在 goroutine 启动之前安装好，从而消除了一种竞态：即第一个模型回合可能会在 lead 的目录或权限下运行。
 func StartInProcessMemberWithConfig(
 	ctx context.Context,
 	team *Team,
@@ -63,6 +61,7 @@ func startInProcessMember(
 ) <-chan agent.AgentEvent {
 	member := team.AddMember(memberName, client, registry, protocol)
 	member.Progress = NewTeammateProgress(memberName, team.Name, randomVerb())
+	// 先设置 WorkDir 和 Checker，再启动 goroutine，避免竞态
 	member.AgentRef.WorkDir = workdir
 	member.AgentRef.Checker = checker
 

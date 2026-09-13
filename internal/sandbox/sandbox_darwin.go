@@ -39,6 +39,9 @@ func buildProfile(config Config) string {
 	sb.WriteString("(allow sysctl-read)\n")
 	// 全盘可读
 	sb.WriteString("(allow file-read* (subpath \"/\"))\n")
+	// shell、Git 和很多 Unix 工具会把 stderr/stdout 重定向到 /dev/null。
+	// 这是设备文件，不属于任何 agent worktree，必须显式允许写入。
+	sb.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
 
 	// 按路径放行写入
 	for _, path := range config.AllowWrite {

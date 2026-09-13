@@ -1,7 +1,11 @@
 package teams
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -55,10 +59,10 @@ func TestSharedTaskUpdateAndDeps(t *testing.T) {
 	store := newTestStore(t)
 	task := store.Create("task", "", "", nil, nil, "")
 	updated := store.Update(task.ID, TaskUpdate{
-		Status:      strptr("in_progress"),
-		Assignee:    strptr("carol"),
-		Description: strptr("new desc"),
-		AddBlocks:   []string{"2"},
+		Status:       strptr("in_progress"),
+		Assignee:     strptr("carol"),
+		Description:  strptr("new desc"),
+		AddBlocks:    []string{"2"},
 		AddBlockedBy: []string{"3"},
 	})
 	if updated == nil || updated.Status != "in_progress" || updated.Assignee != "carol" {
@@ -103,5 +107,95 @@ func TestSharedTaskInitEmpty(t *testing.T) {
 	}
 	if store.Create("y", "", "", nil, nil, "").ID != "1" {
 		t.Fatalf("nextID not reset")
+	}
+}
+
+func TestSharedTaskConcurrentCreateAcrossStores(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	const workers = 8
+	const perWorker = 25
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			store := NewSharedTaskStore(path)
+			for j := 0; j < perWorker; j++ {
+				if task, err := store.CreateWithError("task", "", "", nil, nil, "worker"); err != nil || task.ID == "" {
+					t.Errorf("worker %d create failed: task=%+v err=%v", worker, task, err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	store := NewSharedTaskStore(path)
+	tasks := store.ListTasks("", "")
+	if got, want := len(tasks), workers*perWorker; got != want {
+		t.Fatalf("concurrent creates lost tasks: got %d, want %d", got, want)
+	}
+	seen := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		if seen[task.ID] {
+			t.Fatalf("duplicate task id %q", task.ID)
+		}
+		seen[task.ID] = true
+	}
+}
+
+func TestSharedTaskWriteRejectsCorruptJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewSharedTaskStore(path)
+	if _, err := store.CreateWithError("should fail", "", "", nil, nil, "lead"); err == nil {
+		t.Fatal("expected corrupt task board to return an error")
+	}
+}
+
+func TestSharedTaskConcurrentCreateAcrossProcesses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	const workers = 4
+	const perWorker = 15
+	cmds := make([]*exec.Cmd, 0, workers)
+	for i := 0; i < workers; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=TestSharedTaskCreateHelper", "--")
+		cmd.Env = append(os.Environ(),
+			"MEWCODE_TASK_HELPER=1",
+			"MEWCODE_TASK_PATH="+path,
+			"MEWCODE_TASK_COUNT="+strconv.Itoa(perWorker),
+		)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("helper process failed: %v", err)
+		}
+	}
+
+	tasks := NewSharedTaskStore(path).ListTasks("", "")
+	if got, want := len(tasks), workers*perWorker; got != want {
+		t.Fatalf("cross-process creates lost tasks: got %d, want %d", got, want)
+	}
+}
+
+func TestSharedTaskCreateHelper(t *testing.T) {
+	if os.Getenv("MEWCODE_TASK_HELPER") != "1" {
+		return
+	}
+	count, err := strconv.Atoi(os.Getenv("MEWCODE_TASK_COUNT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewSharedTaskStore(os.Getenv("MEWCODE_TASK_PATH"))
+	for i := 0; i < count; i++ {
+		if _, err := store.CreateWithError("task", "", "", nil, nil, "process"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

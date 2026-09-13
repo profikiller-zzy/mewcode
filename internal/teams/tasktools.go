@@ -77,7 +77,10 @@ func (t *TaskCreateTool) Execute(_ context.Context, args map[string]any) tools.T
 	}
 	description, _ := args["description"].(string)
 	assignee, _ := args["assignee"].(string)
-	task := store.Create(title, description, assignee, stringSlice(args["blocks"]), stringSlice(args["blocked_by"]), t.AgentName)
+	task, err := store.CreateWithError(title, description, assignee, stringSlice(args["blocks"]), stringSlice(args["blocked_by"]), t.AgentName)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Task create failed: %v", err), IsError: true}
+	}
 	assigneeStr := task.Assignee
 	if assigneeStr == "" {
 		assigneeStr = "(unassigned)"
@@ -123,7 +126,10 @@ func (t *TaskGetTool) Execute(_ context.Context, args map[string]any) tools.Tool
 	if store == nil {
 		return tools.ToolResult{Output: fmt.Sprintf("Task store not found for team '%s'", t.TeamName), IsError: true}
 	}
-	task := store.Get(taskID)
+	task, err := store.GetWithError(taskID)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Task read failed: %v", err), IsError: true}
+	}
 	if task == nil {
 		return tools.ToolResult{Output: fmt.Sprintf("Task '%s' not found", taskID), IsError: true}
 	}
@@ -189,7 +195,10 @@ func (t *TaskListTool) Execute(_ context.Context, args map[string]any) tools.Too
 	}
 	status, _ := args["status"].(string)
 	assignee, _ := args["assignee"].(string)
-	tasks := store.ListTasks(status, assignee)
+	tasks, err := store.ListTasksWithError(status, assignee)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Task list failed: %v", err), IsError: true}
+	}
 	if len(tasks) == 0 {
 		var filters []string
 		if status != "" {
@@ -300,7 +309,10 @@ func (t *TaskUpdateTool) Execute(_ context.Context, args map[string]any) tools.T
 		changes = append(changes, "blocked_by += "+strings.Join(addBlockedBy, ", "))
 	}
 
-	task := store.Update(taskID, upd)
+	task, err := store.UpdateWithError(taskID, upd)
+	if err != nil {
+		return tools.ToolResult{Output: fmt.Sprintf("Task update failed: %v", err), IsError: true}
+	}
 	if task == nil {
 		return tools.ToolResult{Output: fmt.Sprintf("Task '%s' not found", taskID), IsError: true}
 	}

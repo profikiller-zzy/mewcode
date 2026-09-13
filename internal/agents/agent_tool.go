@@ -388,9 +388,8 @@ func (t *AgentTool) runSync(ctx context.Context, spec SubAgentSpec, description,
 	}
 }
 
-// finishWorktree 在子 Agent 结束后处理它的隔离 worktree：有未提交改动或新提交
-// 就保留（返回 true），干净就删掉。wtResult 为 nil 时是空操作，返回 false。
-// 成功与失败路径都要调用，否则失败的运行会泄漏 worktree。
+// finishWorktree 在子 Agent 结束后处理它的隔离 worktree：有未提交改动或新提交就保留（返回 true），干净就删掉。
+// wtResult 为 nil 时是空操作，返回 false。成功与失败路径都要调用，否则失败的运行会泄漏 worktree。
 func finishWorktree(ctx context.Context, wtResult *worktree.AgentWorktreeResult) bool {
 	if wtResult == nil {
 		return false
@@ -561,10 +560,8 @@ func (t *AgentTool) runFork(ctx context.Context, description, prompt, modelOverr
 	}
 }
 
-// prepareAgentWorktree is the shared lifecycle setup for synchronous role and
-// fork agents. It creates the worktree, rebases the permission checker, sets
-// Agent.WorkDir (consumed by path resolution and compaction), and prepends the
-// path-translation notice to the task prompt.
+// prepareAgentWorktree 是 role agent 和 fork agent 共享的生命周期设置函数。
+// 它负责创建 worktree 、切换权限 checker、设置 Agent.WorkDir（供路径解析和压缩使用），注入 worktree 说明到 task prompt 的开头。
 func (t *AgentTool) prepareAgentWorktree(ctx context.Context, sub *agent.Agent, prompt, isolation, description string) (string, *worktree.AgentWorktreeResult, error) {
 	if isolation != "worktree" {
 		return prompt, nil, nil

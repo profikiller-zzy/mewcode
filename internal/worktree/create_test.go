@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -96,5 +97,34 @@ func TestGetOrCreateWorktree_NestedSlug(t *testing.T) {
 	}
 	if !strings.HasSuffix(r.WorktreePath, filepath.Join(".mewcode", "worktrees", "team-refactor+alice")) {
 		t.Errorf("WorktreePath flatten mismatch: %q", r.WorktreePath)
+	}
+}
+
+func TestGetOrCreateWorktree_ConcurrentRepositoriesAreSerialized(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not on PATH: %v", err)
+	}
+	repo := t.TempDir()
+	initBareRepoWithCommit(t, repo)
+
+	const workers = 4
+	results := make([]*CreateResult, workers)
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = getOrCreateWorktree(context.Background(), repo, "parallel-"+string(rune('a'+i)))
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("worker %d failed: %v", i, err)
+		}
+		if results[i] == nil || results[i].WorktreePath == "" {
+			t.Fatalf("worker %d returned empty worktree result", i)
+		}
 	}
 }

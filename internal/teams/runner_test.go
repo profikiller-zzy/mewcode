@@ -4,8 +4,13 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"mewcode/internal/conversation"
+	"mewcode/internal/llm"
+	"mewcode/internal/tools"
 )
 
 // TestMain 把所有 teams 的用例都指向一个一次性的邮箱根目录，
@@ -165,6 +170,55 @@ func TestWaitForNextPromptOrShutdownCancel(t *testing.T) {
 	if err == nil {
 		t.Error("expected ctx error, got nil")
 	}
+}
+
+type teammateLifecycleClient struct {
+	once    sync.Once
+	started chan struct{}
+}
+
+func (c *teammateLifecycleClient) SetSystemPrompt(string) {}
+
+func (c *teammateLifecycleClient) Stream(context.Context, *conversation.Manager, []map[string]any) (<-chan llm.StreamEvent, <-chan error) {
+	c.once.Do(func() { close(c.started) })
+	events := make(chan llm.StreamEvent, 1)
+	errs := make(chan error)
+	events <- llm.TextDelta{Text: "done"}
+	events <- llm.StreamEnd{StopReason: "end_turn"}
+	close(events)
+	close(errs)
+	return events, errs
+}
+
+func TestInProcessTeammateOutlivesLeadRunContext(t *testing.T) {
+	team := NewTeam("lifecycle", ModeInProcess)
+	client := &teammateLifecycleClient{started: make(chan struct{})}
+	parentCtx, cancel := context.WithCancel(context.Background())
+	if _, err := SpawnTeammate(parentCtx, TeammateSpawnConfig{
+		Team:       team,
+		MemberName: "worker",
+		Task:       "do work",
+		Client:     client,
+		Registry:   tools.NewRegistry(),
+		Protocol:   "anthropic",
+	}); err != nil {
+		t.Fatalf("SpawnTeammate: %v", err)
+	}
+	// 模拟 Lead 当前一轮结束；teammate 应继续使用 Team context。
+	cancel()
+	select {
+	case <-client.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("teammate was cancelled with the lead run context")
+	}
+	time.Sleep(50 * time.Millisecond)
+	team.mu.Lock()
+	active := team.Members["worker"].Active
+	team.mu.Unlock()
+	if !active {
+		t.Fatal("teammate stopped when the lead run context was cancelled")
+	}
+	team.StopMember("worker")
 }
 
 func TestDrainLeadMailbox(t *testing.T) {

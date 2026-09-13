@@ -44,6 +44,16 @@ type CreateResult struct {
 // `-B`（大写，不是 `-b`）：可以重置被删掉的 worktree 目录遗留的孤儿分支。
 // 每次创建都能省掉一个 `git branch -D` 子进程。
 func getOrCreateWorktree(ctx context.Context, repoRoot, slug string) (*CreateResult, error) {
+	var result *CreateResult
+	err := withRepositoryLock(ctx, repoRoot, func() error {
+		var err error
+		result, err = getOrCreateWorktreeUnlocked(ctx, repoRoot, slug)
+		return err
+	})
+	return result, err
+}
+
+func getOrCreateWorktreeUnlocked(ctx context.Context, repoRoot, slug string) (*CreateResult, error) {
 	worktreePath := WorktreePathFor(repoRoot, slug)
 	worktreeBranch := WorktreeBranchName(slug)
 

@@ -180,6 +180,19 @@ func TestAgentSimpleResponse(t *testing.T) {
 	}
 }
 
+func TestAgentEmptyProviderStreamFails(t *testing.T) {
+	client := &mockClient{responses: [][]llm.StreamEvent{{}}}
+	ag := New(client, tools.NewRegistry(), "anthropic")
+	conv := conversation.NewManager()
+	_, events := runConversationRound(ag, conv, "hello")
+	for _, ev := range events {
+		if errEv, ok := ev.(ErrorEvent); ok && strings.Contains(errEv.Message, "without text or tool calls") {
+			return
+		}
+	}
+	t.Fatal("empty provider stream should produce an ErrorEvent")
+}
+
 func TestAgentToolCallLoop(t *testing.T) {
 	client := &mockClient{responses: [][]llm.StreamEvent{
 		{
@@ -208,14 +221,14 @@ func TestAgentToolCallLoop(t *testing.T) {
 }
 
 func TestAgentMaxIterations(t *testing.T) {
-	loop := []llm.StreamEvent{
-		llm.ToolCallStart{ToolName: "Glob", ToolID: "t"},
-		llm.ToolCallComplete{ToolID: "t", ToolName: "Glob", Arguments: map[string]any{"pattern": "*"}},
-		llm.StreamEnd{StopReason: "tool_use"},
-	}
 	responses := make([][]llm.StreamEvent, 10)
 	for i := range responses {
-		responses[i] = loop
+		id := fmt.Sprintf("t%d", i)
+		responses[i] = []llm.StreamEvent{
+			llm.ToolCallStart{ToolName: "Glob", ToolID: id},
+			llm.ToolCallComplete{ToolID: id, ToolName: "Glob", Arguments: map[string]any{"pattern": "*"}},
+			llm.StreamEnd{StopReason: "tool_use"},
+		}
 	}
 	client := &mockClient{responses: responses}
 	reg := tools.NewRegistry()

@@ -14,8 +14,7 @@ type AgentWorktreeResult struct {
 	GitRoot        string
 }
 
-// CreateAgentWorktree 给 sub-agent 建一个轻量 worktree。与
-// CreateWorktreeForSession 不同，它不会碰全局会话状态
+// CreateAgentWorktree 给 sub-agent 建一个轻量 worktree。与 CreateWorktreeForSession 不同，它不会碰全局会话状态
 // （currentWorktreeSession、process.chdir、项目配置）。
 func CreateAgentWorktree(ctx context.Context, slug string) (*AgentWorktreeResult, error) {
 	if err := ValidateWorktreeSlug(slug); err != nil {
@@ -28,17 +27,23 @@ func CreateAgentWorktree(ctx context.Context, slug string) (*AgentWorktreeResult
 		return nil, &worktreeError{msg: "cannot create agent worktree: not in a git repository"}
 	}
 
-	result, err := getOrCreateWorktree(ctx, gitRoot, slug)
-	if err != nil {
+	var result *CreateResult
+	if err := withRepositoryLock(ctx, gitRoot, func() error {
+		var err error
+		result, err = getOrCreateWorktreeUnlocked(ctx, gitRoot, slug)
+		if err != nil {
+			return err
+		}
+		if !result.Existed {
+			performPostCreationSetup(ctx, gitRoot, result.WorktreePath)
+		} else {
+			// 更新 mtime，免得周期性的过期清理把它当成过期的。
+			now := time.Now()
+			_ = os.Chtimes(result.WorktreePath, now, now)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
-	}
-
-	if !result.Existed {
-		performPostCreationSetup(ctx, gitRoot, result.WorktreePath)
-	} else {
-		// 更新 mtime，免得周期性的过期清理把它当成过期的。
-		now := time.Now()
-		_ = os.Chtimes(result.WorktreePath, now, now)
 	}
 
 	return &AgentWorktreeResult{
@@ -55,16 +60,19 @@ func RemoveAgentWorktree(ctx context.Context, worktreePath, worktreeBranch, gitR
 		return false
 	}
 
-	_, _, code := runGit(ctx, gitRoot, "worktree", "remove", "--force", worktreePath)
-	if code != 0 {
-		return false
-	}
-
-	if worktreeBranch != "" {
-		// 等 git 释放 lockfile（sleep）。
-		time.Sleep(100 * time.Millisecond)
-		runGit(ctx, gitRoot, "branch", "-D", worktreeBranch)
-	}
-	return true
+	ok := false
+	_ = withRepositoryLock(ctx, gitRoot, func() error {
+		_, _, code := runGit(ctx, gitRoot, "worktree", "remove", "--force", worktreePath)
+		if code != 0 {
+			return nil
+		}
+		if worktreeBranch != "" {
+			// 等 git 释放 lockfile（sleep）。
+			time.Sleep(100 * time.Millisecond)
+			runGit(ctx, gitRoot, "branch", "-D", worktreeBranch)
+		}
+		ok = true
+		return nil
+	})
+	return ok
 }
-

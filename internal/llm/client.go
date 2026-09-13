@@ -72,6 +72,19 @@ func WithStreamObserver(ctx context.Context, observer func(RequestLifecycle)) co
 }
 
 func StreamOnce(ctx context.Context, client Client, request StreamRequest) (<-chan StreamEvent, <-chan error) {
+	conversationForRequest := request.Conversation
+	if request.Conversation != nil {
+		normalized := conversation.EnsureToolPairing(request.Conversation.GetMessages())
+		if err := conversation.ValidateToolHistory(normalized); err != nil {
+			events := make(chan StreamEvent)
+			errs := make(chan error, 1)
+			errs <- err
+			close(events)
+			close(errs)
+			return events, errs
+		}
+		conversationForRequest = request.Conversation.CloneWithMessages(normalized)
+	}
 	metadata, _ := StreamMetadataFromContext(ctx)
 	if request.Metadata.SessionID != "" {
 		metadata.SessionID = request.Metadata.SessionID
@@ -93,7 +106,7 @@ func StreamOnce(ctx context.Context, client Client, request StreamRequest) (<-ch
 	if observer != nil {
 		observer(RequestLifecycle{Phase: RequestStarted, Metadata: metadata})
 	}
-	providerEvents, providerErrors := client.Stream(ctx, request.Conversation, request.Tools)
+	providerEvents, providerErrors := client.Stream(ctx, conversationForRequest, request.Tools)
 	if observer == nil {
 		return providerEvents, providerErrors
 	}

@@ -482,6 +482,17 @@ func (r *AgentRun) Start(ctx context.Context) <-chan AgentEvent {
 			default:
 			}
 
+			// A provider stream that closes without text, tool calls, or an
+			// explicit error is not a successful assistant turn. Treat it as a
+			// failure so an empty response cannot silently finish a teammate or
+			// poison the next request.
+			if len(toolCalls) == 0 && strings.TrimSpace(text) == "" {
+				err := errors.New("model stream ended without text or tool calls")
+				ch <- ErrorEvent{Message: err.Error()}
+				r.record(ctx, TraceEvent{Type: TraceError, Source: TraceSourceModel, Iteration: iteration, RequestID: requestID, Payload: map[string]any{"message": err.Error()}})
+				return
+			}
+
 			totalInput += usage.InputTokens
 			totalOutput += usage.OutputTokens
 			ch <- UsageEvent{InputTokens: totalInput, OutputTokens: totalOutput}

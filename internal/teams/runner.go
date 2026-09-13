@@ -98,6 +98,7 @@ func RunInProcessTeammate(
 			}
 		}
 
+		// 发送 idle 通知，表示我这轮任务结束了，现在可以接新任务
 		if member.Progress != nil {
 			if idleReason == "failed" {
 				member.Progress.SetStatus("failed")

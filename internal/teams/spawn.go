@@ -47,8 +47,7 @@ type SpawnResult struct {
 	PaneID  string                  // 仅 tmux/iTerm
 }
 
-// SpawnTeammate 创建一个新团队成员，并在团队当前选定的 backend
-// （Team.Mode）下启动它。它是 Agent 工具 team_name 代码路径使用的唯一入口，
+// SpawnTeammate 创建一个新团队成员，并在团队当前选定的 backend（Team.Mode）下启动它。它是 Agent 工具 team_name 代码路径使用的唯一入口，
 // 具体分派见下面。
 //
 // 对外部 backend，teammate 的初始任务会在新进程启动前通过 mailbox 投递，
@@ -66,8 +65,9 @@ func SpawnTeammate(ctx context.Context, cfg TeammateSpawnConfig) (*SpawnResult, 
 
 	switch cfg.Team.Mode {
 	case ModeInProcess:
+		// 同一个mewcode进程，不同Agent实例、Conversation和goroutine
 		ch := StartInProcessMemberWithConfig(
-			ctx,
+			cfg.Team.workerContext(),
 			cfg.Team,
 			cfg.MemberName,
 			cfg.Client,
@@ -81,8 +81,9 @@ func SpawnTeammate(ctx context.Context, cfg TeammateSpawnConfig) (*SpawnResult, 
 		return &SpawnResult{Mode: ModeInProcess, EventCh: ch}, nil
 
 	case ModeTmux:
+		//Worker 独立mewcode进程， Worker 运行在 tmux pane
 		// 外部进程通过 mailbox 领取任务。在派生动它之前先把初始任务投进去，
-		// 这样新进程第一次轮询就能看到活。
+		// 这样新进程第一次轮询就能看到任务。
 		if cfg.Task != "" {
 			_ = cfg.Team.MailBox.Send(cfg.MemberName, FileMailMessage{
 				From: LeadName,
@@ -101,6 +102,7 @@ func SpawnTeammate(ctx context.Context, cfg TeammateSpawnConfig) (*SpawnResult, 
 		return &SpawnResult{Mode: ModeTmux, PaneID: paneID}, nil
 
 	case ModeITerm:
+		// 和 tmux 类似，运行在新的iTerm tab中
 		if cfg.Task != "" {
 			_ = cfg.Team.MailBox.Send(cfg.MemberName, FileMailMessage{
 				From: LeadName,

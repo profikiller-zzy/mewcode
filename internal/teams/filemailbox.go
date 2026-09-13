@@ -2,22 +2,10 @@ package teams
 
 import (
 	"encoding/json"
-	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
-)
-
-const (
-	// lockAcquireTimeout 是等待文件锁的总时限。到点返回错误交给调用方处理，
-	// 不能悄悄把这条消息扔掉。
-	lockAcquireTimeout = 5 * time.Second
-	// staleLockAge 超过这个时长的锁文件视为持有者已经崩溃，可以强行接管。
-	staleLockAge = 10 * time.Second
-	// maxLockBackoff 限制退避上限，避免高并发下越退越久。
-	maxLockBackoff = 80 * time.Millisecond
 )
 
 type FileMailBox struct {
@@ -27,6 +15,7 @@ type FileMailBox struct {
 	mu sync.Mutex
 }
 
+// FileMailMessage 信箱通行的抽象
 type FileMailMessage struct {
 	From      string `json:"from"`
 	Text      string `json:"text"`
@@ -102,51 +91,17 @@ func (mb *FileMailBox) withLock(agentID string, fn func([]FileMailMessage) ([]Fi
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	lockFile := mb.lockPath(agentID)
-
-	// 抢文件锁：退避时间指数增长并带抖动，避免多个进程醒在同一时刻反复对撞。
-	// 总时限内抢不到就返回错误，让调用方知道这条消息没写进去。
-	var lockFd *os.File
-	var err error
-	deadline := time.Now().Add(lockAcquireTimeout)
-	backoff := 5 * time.Millisecond
-	for {
-		lockFd, err = os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-		if err == nil {
-			break
-		}
-		if !os.IsExist(err) {
+	return withFileLock(mb.lockPath(agentID), func() error {
+		messages, err := mb.readInbox(agentID)
+		if err != nil {
 			return err
 		}
-		// 锁被别人持有，先看它是不是已经陈旧到可以接管
-		if info, statErr := os.Stat(lockFile); statErr == nil {
-			if time.Since(info.ModTime()) > staleLockAge {
-				os.Remove(lockFile)
-				continue
-			}
+		messages, err = fn(messages)
+		if err != nil {
+			return err
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("mailbox %s: 等待文件锁超过 %s，消息未写入", agentID, lockAcquireTimeout)
-		}
-		time.Sleep(backoff + time.Duration(rand.Int63n(int64(backoff))))
-		if backoff < maxLockBackoff {
-			backoff *= 2
-		}
-	}
-	lockFd.Close()
-	defer os.Remove(lockFile)
-
-	// 拿到锁之后重新读一次收件箱
-	messages, _ := mb.readInbox(agentID)
-
-	// 应用修改
-	messages, err = fn(messages)
-	if err != nil {
-		return err
-	}
-
-	// 写回
-	return mb.writeInbox(agentID, messages)
+		return mb.writeInbox(agentID, messages)
+	})
 }
 
 func (mb *FileMailBox) readInbox(agentID string) ([]FileMailMessage, error) {
@@ -160,7 +115,7 @@ func (mb *FileMailBox) readInbox(agentID string) ([]FileMailMessage, error) {
 	}
 	var messages []FileMailMessage
 	if err := json.Unmarshal(data, &messages); err != nil {
-		return nil, nil
+		return nil, err
 	}
 	return messages, nil
 }
@@ -171,6 +126,5 @@ func (mb *FileMailBox) writeInbox(agentID string, messages []FileMailMessage) er
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return writeJSONAtomic(path, data, 0644)
 }
-

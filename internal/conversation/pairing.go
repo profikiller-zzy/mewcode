@@ -1,5 +1,7 @@
 package conversation
 
+import "fmt"
+
 // Anthropic 要求每个 tool_use 都有配对的 tool_result，缺一个整条请求就会被拒。
 // 会话历史出现不配对的情况有几种来路：用户中断在工具执行途中、进程退出后从磁盘
 // 恢复会话、并发写入交错。这些文案是补位用的，模型看到后应当明白该工具没有产出。
@@ -24,6 +26,7 @@ const (
 func EnsureToolPairing(messages []Message) []Message {
 	resolved := make(map[string]struct{})
 	issued := make(map[string]struct{})
+	seenResults := make(map[string]struct{})
 	for _, m := range messages {
 		for _, tr := range m.ToolResults {
 			resolved[tr.ToolUseID] = struct{}{}
@@ -39,8 +42,15 @@ func EnsureToolPairing(messages []Message) []Message {
 		if len(m.ToolResults) > 0 {
 			kept := make([]ToolResultBlock, 0, len(m.ToolResults))
 			for _, tr := range m.ToolResults {
+				// A duplicated result can be produced when a batched tool
+				// execution is serialized twice. Keep the first copy so a
+				// provider never receives two outputs for one call id.
+				if _, duplicate := seenResults[tr.ToolUseID]; duplicate {
+					continue
+				}
 				if _, ok := issued[tr.ToolUseID]; ok {
 					kept = append(kept, tr)
+					seenResults[tr.ToolUseID] = struct{}{}
 				}
 			}
 			if len(kept) == 0 && m.Content == "" && len(m.ToolUses) == 0 {
@@ -69,4 +79,37 @@ func EnsureToolPairing(messages []Message) []Message {
 		}
 	}
 	return out
+}
+
+// ValidateToolHistory rejects malformed tool identifiers before a provider
+// request is sent. Provider APIs require each call id and output id to be
+// unique; returning a local error is more actionable than poisoning every
+// subsequent request with a 400 duplicate-tool-output error.
+func ValidateToolHistory(messages []Message) error {
+	issued := make(map[string]struct{})
+	resolved := make(map[string]struct{})
+	for _, m := range messages {
+		for _, tu := range m.ToolUses {
+			if tu.ToolUseID == "" || tu.ToolName == "" {
+				return fmt.Errorf("invalid tool use: id and name are required")
+			}
+			if _, exists := issued[tu.ToolUseID]; exists {
+				return fmt.Errorf("duplicate tool use id %q", tu.ToolUseID)
+			}
+			issued[tu.ToolUseID] = struct{}{}
+		}
+		for _, tr := range m.ToolResults {
+			if tr.ToolUseID == "" {
+				return fmt.Errorf("invalid tool result: tool use id is required")
+			}
+			if _, exists := resolved[tr.ToolUseID]; exists {
+				return fmt.Errorf("duplicate tool result for call id %q", tr.ToolUseID)
+			}
+			if _, exists := issued[tr.ToolUseID]; !exists {
+				return fmt.Errorf("orphan tool result for call id %q", tr.ToolUseID)
+			}
+			resolved[tr.ToolUseID] = struct{}{}
+		}
+	}
+	return nil
 }

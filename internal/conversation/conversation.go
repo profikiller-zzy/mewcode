@@ -158,6 +158,14 @@ func (m *Manager) Clone() *Manager {
 	return clone
 }
 
+// CloneWithMessages 创建一份保留 Manager 元数据、但使用给定消息历史的隔离快照。
+// 调用方可以在发送给 Provider 前对消息做规范化，而不会把补位结果写回正式会话。
+func (m *Manager) CloneWithMessages(messages []Message) *Manager {
+	clone := m.Clone()
+	clone.history = cloneMessages(messages)
+	return clone
+}
+
 // ReplaceWith 把一份已完成的 run 快照提交回它所属的 session。
 func (m *Manager) ReplaceWith(other *Manager) {
 	if other == nil {

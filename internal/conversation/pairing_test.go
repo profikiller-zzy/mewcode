@@ -124,3 +124,31 @@ func TestEnsureToolPairingDoesNotMutateInput(t *testing.T) {
 		t.Fatalf("input slice was modified, len = %d", len(in))
 	}
 }
+
+func TestEnsureToolPairingDropsDuplicateResults(t *testing.T) {
+	in := []Message{
+		{Role: "assistant", ToolUses: []ToolUseBlock{{ToolUseID: "t1", ToolName: "ReadFile"}}},
+		{Role: "user", ToolResults: []ToolResultBlock{
+			{ToolUseID: "t1", Content: "first"},
+			{ToolUseID: "t1", Content: "duplicate"},
+		}},
+	}
+	got := EnsureToolPairing(in)
+	if len(got) != 2 || len(got[1].ToolResults) != 1 || got[1].ToolResults[0].Content != "first" {
+		t.Fatalf("duplicate result was not removed: %+v", got)
+	}
+	if err := ValidateToolHistory(got); err != nil {
+		t.Fatalf("normalized history should validate: %v", err)
+	}
+}
+
+func TestValidateToolHistoryRejectsDuplicateCalls(t *testing.T) {
+	history := []Message{
+		{Role: "assistant", ToolUses: []ToolUseBlock{{ToolUseID: "t1", ToolName: "ReadFile"}}},
+		{Role: "user", ToolResults: []ToolResultBlock{{ToolUseID: "t1", Content: "ok"}}},
+		{Role: "assistant", ToolUses: []ToolUseBlock{{ToolUseID: "t1", ToolName: "ReadFile"}}},
+	}
+	if err := ValidateToolHistory(history); err == nil {
+		t.Fatal("expected duplicate tool use id to be rejected")
+	}
+}
