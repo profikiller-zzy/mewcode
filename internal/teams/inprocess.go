@@ -66,8 +66,11 @@ func startInProcessMember(
 	member.AgentRef.Checker = checker
 
 	memberCtx, cancel := context.WithCancel(ctx)
+	team.mu.Lock()
 	member.Active = true
 	member.Cancel = cancel
+	team.persist()
+	team.mu.Unlock()
 
 	eventCh := make(chan agent.AgentEvent, 32)
 	go func() {
@@ -79,9 +82,18 @@ func startInProcessMember(
 			}
 			team.mu.Lock()
 			member.Active = false
+			team.persist()
 			team.mu.Unlock()
 		}()
-		_ = RunInProcessTeammate(memberCtx, team, member, task, addendum, eventCh)
+		err := RunInProcessTeammate(memberCtx, team, member, task, addendum, eventCh)
+		if err != nil && memberCtx.Err() == nil {
+			// 运行错误不能只被 goroutine 丢掉，否则 Lead 只能看到成员消失，
+			// 不知道是模型请求失败、邮箱错误还是工具循环异常。
+			_ = team.MailBox.Send(LeadName, NewFileMailMessage(
+				member.Name,
+				"[teammate-error] "+err.Error(),
+			))
+		}
 	}()
 	return eventCh
 }

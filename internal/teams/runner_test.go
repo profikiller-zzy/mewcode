@@ -3,6 +3,7 @@ package teams
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"mewcode/internal/conversation"
 	"mewcode/internal/llm"
+	"mewcode/internal/permissions"
 	"mewcode/internal/tools"
 )
 
@@ -217,6 +219,84 @@ func TestInProcessTeammateOutlivesLeadRunContext(t *testing.T) {
 	team.mu.Unlock()
 	if !active {
 		t.Fatal("teammate stopped when the lead run context was cancelled")
+	}
+	team.StopMember("worker")
+}
+
+type teammatePermissionClient struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *teammatePermissionClient) SetSystemPrompt(string) {}
+
+func (c *teammatePermissionClient) Stream(context.Context, *conversation.Manager, []map[string]any) (<-chan llm.StreamEvent, <-chan error) {
+	c.mu.Lock()
+	c.calls++
+	call := c.calls
+	c.mu.Unlock()
+
+	events := make(chan llm.StreamEvent, 3)
+	errs := make(chan error)
+	if call == 1 {
+		events <- llm.ToolCallComplete{
+			ToolID: "write-1", ToolName: "WriteFile",
+			Arguments: map[string]any{
+				"file_path": "permission-probe.txt",
+				"content":   "ok",
+			},
+		}
+		events <- llm.StreamEnd{StopReason: "tool_use"}
+	} else {
+		events <- llm.TextDelta{Text: "done"}
+		events <- llm.StreamEnd{StopReason: "end_turn"}
+	}
+	close(events)
+	close(errs)
+	return events, errs
+}
+
+func TestInProcessTeammateAutoApprovesPermissionRequests(t *testing.T) {
+	workdir := t.TempDir()
+	team := &Team{
+		Name:    "permission",
+		Mode:    ModeInProcess,
+		Members: map[string]*Member{},
+		MailBox: NewFileMailBox(t.TempDir()),
+	}
+	client := &teammatePermissionClient{}
+	registry := tools.NewRegistry()
+	registry.Register(&tools.WriteFileTool{})
+	checker := permissions.NewChecker(
+		permissions.NewPathSandbox(workdir),
+		permissions.NewRuleEngine(workdir),
+		permissions.ModeDefault,
+	)
+	if _, err := SpawnTeammate(context.Background(), TeammateSpawnConfig{
+		Team:       team,
+		MemberName: "worker",
+		Task:       "write the probe",
+		Client:     client,
+		Registry:   registry,
+		Protocol:   "anthropic",
+		Workdir:    workdir,
+		Checker:    checker,
+	}); err != nil {
+		t.Fatalf("SpawnTeammate: %v", err)
+	}
+
+	probe := filepath.Join(workdir, "permission-probe.txt")
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, err := os.Stat(probe); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("teammate remained blocked on PermissionRequestEvent")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	team.StopMember("worker")
 }

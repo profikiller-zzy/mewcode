@@ -86,6 +86,14 @@ func RunInProcessTeammate(
 					member.Progress.RecordTokens(int64(e.InputTokens), int64(e.OutputTokens))
 				}
 			}
+			// teammate 运行在后台，没有 TUI 可以替它回答权限弹窗。
+			// Checker 已经在 executeSingleTool 中完成危险命令、受保护路径和
+			// 显式 deny 的拦截；能走到这里的只是需要人工确认的 Ask。
+			// 对 autonomous teammate 自动批准，否则 Agent 会永久阻塞在
+			// executeSingleTool 的 respCh 上。
+			if e, ok := ev.(agent.PermissionRequestEvent); ok {
+				e.ResponseCh <- agent.PermAllow
+			}
 			if eventOut != nil {
 				select {
 				case eventOut <- ev:
@@ -93,10 +101,15 @@ func RunInProcessTeammate(
 					return ctx.Err()
 				}
 			}
+
 			if e, ok := ev.(agent.ErrorEvent); ok && e.Message != "" {
 				idleReason = "failed"
 			}
 		}
+
+		// 每轮结束都落盘一次，便于 Lead 或后续诊断看到 teammate 最后
+		// 执行到的模型输出和工具调用，而不是只能等整个 teammate 退出。
+		_, _ = SaveTranscript(team.Name, member.Name, member.Conv)
 
 		// 发送 idle 通知，表示我这轮任务结束了，现在可以接新任务
 		if member.Progress != nil {
