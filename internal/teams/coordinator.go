@@ -1,12 +1,13 @@
 package teams
 
-// CoordinatorAllowedTools CoordinatorMode 把 Lead 的工具集收窄到纯调度。
+// CoordinatorAllowedTools CoordinatorMode 把 Lead 的工具集收窄到调度、受控观察和整合。
 //
-// 划线的标准不是「读」和「写」，而是这个工具会不会把大段内容灌进 Lead 的上下文。
+// 划线的标准不是简单的「读」和「写」，而是这个工具是否允许 Lead 绕过 Worker
+// 直接实施业务修改，或者把不受控的大段内容灌进上下文。
 // Lead 的上下文要装任务分解、队员状态和消息记录，一旦它能直接读文件、跑命令，
 // 模型就会忍不住自己去查，几千行代码进来，真正该留给调度的空间就没了。
-// 所以 ReadFile / Glob / Grep / Bash 都不在这里：需要看代码就派队员去看，
-// 队员把结论带回来，Lead 消化结论、写下一步的规格。
+// 因此任意 ReadFile / Glob / Grep / Bash 仍不在这里；需要审查时使用
+// WorktreeInspect 读取受限 diff，整合时使用 WorktreeMerge/Finalize。
 //
 // 队员的任务分派靠 Agent 的 prompt 写清楚，不靠共享任务表，因此 TaskCreate /
 // TaskGet / TaskList / TaskUpdate 也不给 Lead，这几个是队员之间协调用的，
@@ -23,11 +24,15 @@ package teams
 // 3. Implementation: 队员按规格改代码并提交
 // 4. Verification: 队员验证改动是否正确
 var CoordinatorAllowedTools = map[string]bool{
-	"Agent":           true,
-	"SendMessage":     true,
-	"TaskStop":        true,
-	"SyntheticOutput": true,
-	"TeamDelete":      true,
+	"Agent":            true,
+	"SendMessage":      true,
+	"TaskStop":         true,
+	"SyntheticOutput":  true,
+	"TeamDelete":       true,
+	"TeamStatus":       true,
+	"WorktreeInspect":  true,
+	"WorktreeMerge":    true,
+	"WorktreeFinalize": true,
 }
 
 // IsCoordinatorTool 判断某个工具在 Coordinator 模式下是否可用。

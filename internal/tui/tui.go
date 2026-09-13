@@ -201,18 +201,18 @@ type Model struct {
 	subAgentProgressCh chan agents.SubAgentProgress
 	// activeSubAgents 是本轮正在跑的子 Agent 活动块。fan-out 时同一轮会有多个，
 	// 用 slice 保持 spawn 顺序，进度事件按 AgentID 路由到各自的块。
-	activeSubAgents []*subAgentBlock
-	askUserDialog   bool
-	askUserQuestions   []tools.Question
-	askUserCursors     []int
-	askUserSelected    []map[int]bool
-	askUserOther       []string
-	askUserQIdx        int
-	askUserRespCh      chan tools.QuestionResponse
-	askUserAnswered    map[int]string
-	askUserOnSubmit    bool
-	askUserSubmitIdx   int
-	skillCatalog       *skills.Catalog
+	activeSubAgents  []*subAgentBlock
+	askUserDialog    bool
+	askUserQuestions []tools.Question
+	askUserCursors   []int
+	askUserSelected  []map[int]bool
+	askUserOther     []string
+	askUserQIdx      int
+	askUserRespCh    chan tools.QuestionResponse
+	askUserAnswered  map[int]string
+	askUserOnSubmit  bool
+	askUserSubmitIdx int
+	skillCatalog     *skills.Catalog
 	// announcedSkills 记录已经告诉过模型的 Skill 名字。会话首条 system-reminder
 	// 带的是全量清单，之后只补新增的，避免重复占用上下文。
 	announcedSkills    map[string]bool
@@ -731,6 +731,7 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 	m.registry.Register(&teams.TeamDeleteTool{TeamMgr: teamMgr})
 	m.registry.Register(&teams.SendMessageTool{TeamMgr: teamMgr, SenderName: "lead"})
 	m.registry.Register(&teams.TaskStopTool{TeamMgr: teamMgr})
+	teams.RegisterCoordinatorTools(m.registry, teamMgr)
 	m.registry.Register(&tools.SyntheticOutputTool{})
 	m.registry.Register(&agents.AgentTool{
 		Client:        client,
@@ -742,11 +743,11 @@ func (m *Model) registerAgentTools(client llm.Client, providerCfg *config.Provid
 		MaxOutputTokens: providerCfg.GetMaxOutputTokens(),
 		Registry:        m.registry,
 		Protocol:        protocol,
-		ProgressCh:    m.subAgentProgressCh,
-		Loader:        loader,
-		Conversation:  m.conversation,
-		TeamMgr:       teamMgr,
-		ForkDisabled:  m.ForkDisabled,
+		ProgressCh:      m.subAgentProgressCh,
+		Loader:          loader,
+		Conversation:    m.conversation,
+		TeamMgr:         teamMgr,
+		ForkDisabled:    m.ForkDisabled,
 		// ParentChecker 在下面 m.ag.Checker 构造好之后再接上 ——
 		// registerAgentTools 跑在主 agent 的 Checker 设置之前。
 	})

@@ -22,8 +22,12 @@ Every message you send is to the user. Worker results and system notifications a
 - **TaskStop** — Stop a running worker
 - **SyntheticOutput** — Return structured output to the user
 - **TeamDelete** — Tear down the team when the work is done
+- **TeamStatus** — Inspect member activity and registered worktree paths
+- **WorktreeInspect** — Review a bounded status/commit/diff snapshot for one worker
+- **WorktreeMerge** — Merge or cherry-pick a reviewed worker branch into the main repository
+- **WorktreeFinalize** — Keep or remove a worker worktree after review
 
-You cannot read files, run commands, or edit code yourself. This is deliberate: your context holds the task decomposition, worker status and message history, and it needs to stay that way. When you need to know what the code looks like, send a worker to look and report back.
+You cannot edit business code yourself or run arbitrary shell commands. Use WorktreeInspect for a bounded review of a worker's changes, and WorktreeMerge only after you have reviewed the result. Worktree tools operate only on worktrees registered in the named team and enforce repository safety checks.
 
 When calling Agent:
 - Do not use one worker to check on another. Workers will notify you when they are done.
@@ -53,7 +57,7 @@ When calling Agent, use subagent_type ` + "`general-purpose`" + ` or a specific 
 
 Workers have access to standard tools: ReadFile, EditFile, WriteFile, Bash, Grep, Glob, plus the team coordination tools (TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage). Anything you cannot do yourself, a worker can do for you.
 
-Because workers have Bash, git work belongs to them too. Merging a branch, cherry-picking a commit or opening a PR is a task you delegate with precise instructions, not something you run yourself.
+Workers have Bash and can commit inside their own worktrees. After a worker reports completion, inspect its worktree, decide whether to accept it, then use WorktreeMerge or WorktreeFinalize. If integration conflicts, send a worker a precise conflict-resolution task.
 
 ## 4. Task Workflow
 
@@ -159,7 +163,7 @@ You:
   Fix is in progress.`
 
 // coordinatorSparseReminder 是复述版，只留最容易被模型忘掉的那几条硬约束。
-const coordinatorSparseReminder = `Coordinator mode still active (see full instructions earlier in conversation). You cannot read files, run commands, or edit code — send a worker instead. Tools: Agent, SendMessage, TaskStop, SyntheticOutput, TeamDelete. Address workers by the name in the from= field of a team-notification. Synthesize worker findings yourself before directing follow-up work.`
+const coordinatorSparseReminder = `Coordinator mode still active (see full instructions earlier in conversation). Do not edit business code or run arbitrary shell commands. Use Agent/SendMessage for work, WorktreeInspect for bounded review, WorktreeMerge for accepted changes, and WorktreeFinalize for cleanup. Tools: Agent, SendMessage, TaskStop, SyntheticOutput, TeamDelete, TeamStatus, WorktreeInspect, WorktreeMerge, WorktreeFinalize. Address workers by the name in the from= field of a team-notification. Synthesize worker findings yourself before directing follow-up work.`
 
 // CoordinatorReminder 返回 coordinator 模式的调度指引，每轮以 system-reminder 注入。
 // 不做成系统提示词段落有两个原因：一是长会话里模型会漂移，系统提示词只在开头出现一次，

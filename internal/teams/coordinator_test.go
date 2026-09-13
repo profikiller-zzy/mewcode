@@ -9,7 +9,7 @@ import (
 	"mewcode/internal/prompt"
 )
 
-// Lead 在 coordinator 模式下只做调度，不下场碰代码。
+// Lead 在 coordinator 模式下不能直接实现业务代码，但可以使用受控的审查/整合工具。
 func TestCoordinatorBlocksCodeTools(t *testing.T) {
 	blocked := []string{"ReadFile", "WriteFile", "EditFile", "Glob", "Grep", "Bash"}
 	for _, name := range blocked {
@@ -19,7 +19,7 @@ func TestCoordinatorBlocksCodeTools(t *testing.T) {
 	}
 }
 
-// 任务表是队员之间协调用的，Lead 靠 task-notification 掌握进度。
+// 任务表仍是队员之间协调用的，Lead 通过队员通知和 TeamStatus 掌握进度。
 func TestCoordinatorBlocksTaskBoardTools(t *testing.T) {
 	for _, name := range []string{"TaskCreate", "TaskGet", "TaskList", "TaskUpdate"} {
 		if IsCoordinatorTool(name) {
@@ -29,7 +29,7 @@ func TestCoordinatorBlocksTaskBoardTools(t *testing.T) {
 }
 
 func TestCoordinatorAllowsSchedulingTools(t *testing.T) {
-	for _, name := range []string{"Agent", "SendMessage", "TaskStop", "SyntheticOutput"} {
+	for _, name := range []string{"Agent", "SendMessage", "TaskStop", "SyntheticOutput", "TeamStatus", "WorktreeInspect", "WorktreeMerge", "WorktreeFinalize"} {
 		if !IsCoordinatorTool(name) {
 			t.Errorf("%s 是调度必需的工具，缺了 Lead 没法干活", name)
 		}
@@ -181,7 +181,7 @@ func TestCoordinatorReminderGoesSparseAfterFirstTurn(t *testing.T) {
 		t.Fatalf("第二轮应发精简版，实际 %d 字节 vs 首轮 %d 字节", len(second), len(full))
 	}
 	// 精简版仍要守住最容易被忘掉的硬约束
-	for _, must := range []string{"cannot read files", "TaskStop", "from="} {
+	for _, must := range []string{"Do not edit business code", "WorktreeInspect", "from="} {
 		if !strings.Contains(second, must) {
 			t.Errorf("精简版丢了关键约束：%s", must)
 		}
@@ -216,6 +216,7 @@ func TestCoordinatorWiringIsSameAcrossEntrypoints(t *testing.T) {
 		"CoordinatorToolFilter",
 		"CoordinatorActiveFn",
 		"DrainLeadMailbox",
+		"RegisterCoordinatorTools",
 	}
 	for entry, path := range roots {
 		src, err := os.ReadFile(path)

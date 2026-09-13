@@ -124,6 +124,7 @@ func runPrint(userPrompt string, cfg *config.AppConfig, hookCfgs []hooks.Hook, o
 	registry.Register(&teams.TeamDeleteTool{TeamMgr: teamMgr})
 	registry.Register(&teams.SendMessageTool{TeamMgr: teamMgr, SenderName: "lead"})
 	registry.Register(&teams.TaskStopTool{TeamMgr: teamMgr})
+	teams.RegisterCoordinatorTools(registry, teamMgr)
 	registry.Register(&tools.SyntheticOutputTool{})
 
 	// 连 MCP。放在内建工具都注册完之后：MCP 工具的加载模式要按 schema 总量跟
@@ -160,11 +161,11 @@ func runPrint(userPrompt string, cfg *config.AppConfig, hookCfgs []hooks.Hook, o
 		MaxOutputTokens: p.GetMaxOutputTokens(),
 		Registry:        registry,
 		Protocol:        p.Protocol,
-		ProgressCh:    subProgressCh,
-		Loader:        loader,
-		Conversation:  conv,
-		TeamMgr:       teamMgr,
-		ForkDisabled:  !cfg.ForkEnabled(),
+		ProgressCh:      subProgressCh,
+		Loader:          loader,
+		Conversation:    conv,
+		TeamMgr:         teamMgr,
+		ForkDisabled:    !cfg.ForkEnabled(),
 	})
 
 	ag := agent.New(client, registry, p.Protocol)

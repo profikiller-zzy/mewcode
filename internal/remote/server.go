@@ -353,6 +353,7 @@ func (s *Server) registerTools(client llm.Client, p *config.ProviderConfig, wd s
 	s.registry.Register(&teams.TeamDeleteTool{TeamMgr: s.teamMgr})
 	s.registry.Register(&teams.SendMessageTool{TeamMgr: s.teamMgr, SenderName: "lead"})
 	s.registry.Register(&teams.TaskStopTool{TeamMgr: s.teamMgr})
+	teams.RegisterCoordinatorTools(s.registry, s.teamMgr)
 	s.registry.Register(&tools.SyntheticOutputTool{})
 	subProgressCh := make(chan agents.SubAgentProgress, 32)
 	s.registry.Register(&agents.AgentTool{
@@ -364,11 +365,11 @@ func (s *Server) registerTools(client llm.Client, p *config.ProviderConfig, wd s
 		MaxOutputTokens: p.GetMaxOutputTokens(),
 		Registry:        s.registry,
 		Protocol:        p.Protocol,
-		ProgressCh:    subProgressCh,
-		Loader:        loader,
-		Conversation:  s.conv,
-		TeamMgr:       s.teamMgr,
-		ForkDisabled:  s.forkDisabled,
+		ProgressCh:      subProgressCh,
+		Loader:          loader,
+		Conversation:    s.conv,
+		TeamMgr:         s.teamMgr,
+		ForkDisabled:    s.forkDisabled,
 	})
 }
 

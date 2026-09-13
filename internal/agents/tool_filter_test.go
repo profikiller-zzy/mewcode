@@ -12,12 +12,14 @@ type dummyTool struct {
 	category tools.ToolCategory
 }
 
-func (d *dummyTool) Name() string                                              { return d.name }
-func (d *dummyTool) Description() string                                       { return "test tool" }
-func (d *dummyTool) Category() tools.ToolCategory                              { return d.category }
+func (d *dummyTool) Name() string                 { return d.name }
+func (d *dummyTool) Description() string          { return "test tool" }
+func (d *dummyTool) Category() tools.ToolCategory { return d.category }
 
-func (d *dummyTool) Schema() map[string]any                                    { return nil }
-func (d *dummyTool) Execute(_ context.Context, _ map[string]any) tools.ToolResult { return tools.ToolResult{} }
+func (d *dummyTool) Schema() map[string]any { return nil }
+func (d *dummyTool) Execute(_ context.Context, _ map[string]any) tools.ToolResult {
+	return tools.ToolResult{}
+}
 
 func makeRegistry(names ...string) *tools.Registry {
 	reg := tools.NewRegistry()
@@ -183,13 +185,13 @@ func TestGeneralPurposeNoRecursion(t *testing.T) {
 // 进程内队友的工具集从 Lead 那份过滤而来，禁用名单要在 spec 自带的基础上再并上
 // TeammateDisallowedTools，否则队友会连团队成员管理一起继承过去。
 func TestTeammateFilterBlocksTeamManagement(t *testing.T) {
-	reg := makeRegistry("ReadFile", "Bash", "EditFile", "Agent", "TeamCreate", "TeamDelete", "SendMessage")
+	reg := makeRegistry("ReadFile", "Bash", "EditFile", "Agent", "TeamCreate", "TeamDelete", "SendMessage", "TeamStatus", "WorktreeInspect", "WorktreeMerge", "WorktreeFinalize")
 	spec := BuiltinSpecs["general-purpose"]
 
 	disallowed := append(append([]string{}, spec.DisallowedTools...), TeammateDisallowedTools...)
 	filtered := FilterToolsForAgent(reg, spec.Tools, disallowed, false)
 
-	for _, name := range []string{"Agent", "TeamCreate", "TeamDelete"} {
+	for _, name := range []string{"Agent", "TeamCreate", "TeamDelete", "TeamStatus", "WorktreeInspect", "WorktreeMerge", "WorktreeFinalize"} {
 		if hasToolNamed(filtered, name) {
 			t.Errorf("队友工具集不应包含 %s", name)
 		}

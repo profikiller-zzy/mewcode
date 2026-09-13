@@ -52,9 +52,9 @@ var AsyncAgentAllowedTools = map[string]bool{
 	"ToolSearch":      true,
 	// ToolSearch 只负责把 schema 读出来，真正调用要靠 mcp_call，
 	// 两个得成对放行，否则子 Agent 看得见工具却调不动
-	"mcp_call":        true,
-	"EnterWorktree":   true,
-	"ExitWorktree":    true,
+	"mcp_call":      true,
+	"EnterWorktree": true,
+	"ExitWorktree":  true,
 }
 
 // InProcessTeammateAllowedTools 当 sub-agent 以进程内 teammate 的形式被拉起时
@@ -73,7 +73,12 @@ var InProcessTeammateAllowedTools = map[string]bool{
 
 // TeammateDisallowedTools 队友在协作工具之外额外被挡掉的工具。组建和解散团队
 // 由 Lead 负责，队友只管干活和相互协调，不参与团队成员管理。
-var TeammateDisallowedTools = []string{"TeamCreate", "TeamDelete"}
+var TeammateDisallowedTools = []string{
+	"TeamCreate", "TeamDelete",
+	// 这些工具属于 Lead 的审查/整合面，Worker 不能绕过自己的任务直接
+	// 查看或合并其它成员的 worktree。
+	"TeamStatus", "WorktreeInspect", "WorktreeMerge", "WorktreeFinalize",
+}
 
 func IsMCPTool(name string) bool {
 	return strings.HasPrefix(name, "mcp__")
@@ -153,4 +158,3 @@ func FilterToolsForAgentEx(reg *tools.Registry, allowedTools, disallowedTools []
 	}
 	return filtered
 }
-
